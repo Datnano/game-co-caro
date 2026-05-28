@@ -3,102 +3,101 @@ import { useRef, useCallback } from "react";
 export function useSound() {
   const ctxRef = useRef<AudioContext | null>(null);
 
-  function getCtx() {
-    if (!ctxRef.current) {
-      ctxRef.current = new AudioContext();
-    }
+  function ctx() {
+    if (!ctxRef.current) ctxRef.current = new AudioContext();
     return ctxRef.current;
   }
 
   const playPlace = useCallback(() => {
     try {
-      const ctx = getCtx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g);
-      g.connect(ctx.destination);
+      const c = ctx();
+      const o = c.createOscillator(); const g = c.createGain();
+      o.connect(g); g.connect(c.destination);
       o.type = "sine";
-      o.frequency.setValueAtTime(800, ctx.currentTime);
-      o.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.08);
-      g.gain.setValueAtTime(0.3, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.12);
-      o.start(ctx.currentTime);
-      o.stop(ctx.currentTime + 0.12);
+      o.frequency.setValueAtTime(700, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(380, c.currentTime + 0.09);
+      g.gain.setValueAtTime(0.28, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.13);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.13);
+    } catch {}
+  }, []);
+
+  // Two-click confirmation sound — higher pitched "click" on confirm
+  const playConfirm = useCallback(() => {
+    try {
+      const c = ctx();
+      // short double-beep
+      [0, 0.07].forEach(delay => {
+        const o = c.createOscillator(); const g = c.createGain();
+        o.connect(g); g.connect(c.destination);
+        o.type = "sine";
+        o.frequency.setValueAtTime(1100, c.currentTime + delay);
+        o.frequency.exponentialRampToValueAtTime(900, c.currentTime + delay + 0.06);
+        g.gain.setValueAtTime(0.22, c.currentTime + delay);
+        g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + delay + 0.08);
+        o.start(c.currentTime + delay); o.stop(c.currentTime + delay + 0.08);
+      });
     } catch {}
   }, []);
 
   const playWin = useCallback(() => {
     try {
-      const ctx = getCtx();
-      const notes = [523, 659, 784, 1047];
-      notes.forEach((freq, i) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.connect(g);
-        g.connect(ctx.destination);
+      const c = ctx();
+      [523, 659, 784, 1047, 1318].forEach((freq, i) => {
+        const o = c.createOscillator(); const g = c.createGain();
+        o.connect(g); g.connect(c.destination);
         o.type = "triangle";
-        const t = ctx.currentTime + i * 0.15;
+        const t = c.currentTime + i * 0.13;
         o.frequency.setValueAtTime(freq, t);
-        g.gain.setValueAtTime(0.4, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
-        o.start(t);
-        o.stop(t + 0.3);
+        g.gain.setValueAtTime(0.35, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.28);
+        o.start(t); o.stop(t + 0.28);
       });
     } catch {}
   }, []);
 
   const playLose = useCallback(() => {
     try {
-      const ctx = getCtx();
-      const notes = [392, 330, 262];
-      notes.forEach((freq, i) => {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.connect(g);
-        g.connect(ctx.destination);
+      const c = ctx();
+      [392, 349, 294, 262].forEach((freq, i) => {
+        const o = c.createOscillator(); const g = c.createGain();
+        o.connect(g); g.connect(c.destination);
         o.type = "sawtooth";
-        const t = ctx.currentTime + i * 0.2;
+        const t = c.currentTime + i * 0.18;
         o.frequency.setValueAtTime(freq, t);
-        g.gain.setValueAtTime(0.3, t);
-        g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
-        o.start(t);
-        o.stop(t + 0.35);
+        g.gain.setValueAtTime(0.25, t);
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+        o.start(t); o.stop(t + 0.32);
       });
     } catch {}
   }, []);
 
   const playChat = useCallback(() => {
     try {
-      const ctx = getCtx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g);
-      g.connect(ctx.destination);
+      const c = ctx();
+      const o = c.createOscillator(); const g = c.createGain();
+      o.connect(g); g.connect(c.destination);
       o.type = "sine";
-      o.frequency.setValueAtTime(1200, ctx.currentTime);
-      o.frequency.exponentialRampToValueAtTime(1600, ctx.currentTime + 0.1);
-      g.gain.setValueAtTime(0.15, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.15);
-      o.start(ctx.currentTime);
-      o.stop(ctx.currentTime + 0.15);
+      o.frequency.setValueAtTime(1300, c.currentTime);
+      o.frequency.exponentialRampToValueAtTime(1700, c.currentTime + 0.1);
+      g.gain.setValueAtTime(0.13, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.14);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.14);
     } catch {}
   }, []);
 
   const playTick = useCallback(() => {
     try {
-      const ctx = getCtx();
-      const o = ctx.createOscillator();
-      const g = ctx.createGain();
-      o.connect(g);
-      g.connect(ctx.destination);
+      const c = ctx();
+      const o = c.createOscillator(); const g = c.createGain();
+      o.connect(g); g.connect(c.destination);
       o.type = "square";
-      o.frequency.setValueAtTime(600, ctx.currentTime);
-      g.gain.setValueAtTime(0.1, ctx.currentTime);
-      g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.05);
-      o.start(ctx.currentTime);
-      o.stop(ctx.currentTime + 0.05);
+      o.frequency.setValueAtTime(580, c.currentTime);
+      g.gain.setValueAtTime(0.09, c.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.05);
+      o.start(c.currentTime); o.stop(c.currentTime + 0.05);
     } catch {}
   }, []);
 
-  return { playPlace, playWin, playLose, playChat, playTick };
+  return { playPlace, playConfirm, playWin, playLose, playChat, playTick };
 }

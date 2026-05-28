@@ -1,14 +1,10 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 
 const BOARD_SIZE = 20;
-const COORD_LETTERS = "ABCDEFGHJKLMNOPQRSTU"; // 20 letters, skip I
+const COORD_LETTERS = "ABCDEFGHJKLMNOPQRSTU";
 
 interface DanmakuMsg {
-  id: string;
-  text: string;
-  color: string;
-  y: number;
-  startX: number;
+  id: string; text: string; color: string; y: number; startX: number;
 }
 
 interface Props {
@@ -24,391 +20,272 @@ interface Props {
 }
 
 interface SkinConfig {
-  xColor: string;
-  xGlow: string;
-  oColor: string;
-  oGlow: string;
-  gridLine: string;
-  gridBorder: string;
-  bgColor: string;
-  coordColor: string;
-  cellBg: string;
+  xColor: string; xGlow: string; oColor: string; oGlow: string;
+  gridLine: string; gridBorder: string; bgColor: string; coordColor: string;
 }
 
 function getSkin(skin: string): SkinConfig {
   switch (skin) {
-    case "cyberpunk":
-      return {
-        xColor: "#ff00ff", xGlow: "#cc00cc",
-        oColor: "#00ffff", oGlow: "#00aaaa",
-        gridLine: "rgba(0,255,255,0.25)",
-        gridBorder: "rgba(0,255,255,0.6)",
-        bgColor: "#050010",
-        coordColor: "rgba(0,255,255,0.7)",
-        cellBg: "rgba(0,255,255,0.025)",
-      };
-    case "gold":
-      return {
-        xColor: "#ffd700", xGlow: "#cc9900",
-        oColor: "#ff8c00", oGlow: "#cc5500",
-        gridLine: "rgba(255,215,0,0.25)",
-        gridBorder: "rgba(255,215,0,0.6)",
-        bgColor: "#080500",
-        coordColor: "rgba(255,215,0,0.75)",
-        cellBg: "rgba(255,200,0,0.025)",
-      };
-    case "silver":
-      return {
-        xColor: "#e8e8e8", xGlow: "#a0a0a0",
-        oColor: "#b0b8c8", oGlow: "#707888",
-        gridLine: "rgba(200,210,230,0.2)",
-        gridBorder: "rgba(200,210,230,0.5)",
-        bgColor: "#070810",
-        coordColor: "rgba(180,190,210,0.65)",
-        cellBg: "rgba(200,210,230,0.02)",
-      };
-    default: // classic
-      return {
-        xColor: "#ff3333", xGlow: "#cc0000",
-        oColor: "#3399ff", oGlow: "#0055cc",
-        gridLine: "rgba(80,130,220,0.28)",
-        gridBorder: "rgba(80,130,220,0.65)",
-        bgColor: "#06091a",
-        coordColor: "rgba(130,170,230,0.65)",
-        cellBg: "rgba(60,100,200,0.025)",
-      };
+    case "cyberpunk": return {
+      xColor:"#ff00ff", xGlow:"#aa00aa", oColor:"#00ffff", oGlow:"#009999",
+      gridLine:"rgba(0,255,255,0.22)", gridBorder:"rgba(0,255,255,0.55)",
+      bgColor:"#050010", coordColor:"rgba(0,255,255,0.65)",
+    };
+    case "gold": return {
+      xColor:"#ffd700", xGlow:"#bb8800", oColor:"#ff8c00", oGlow:"#bb5500",
+      gridLine:"rgba(255,215,0,0.22)", gridBorder:"rgba(255,215,0,0.55)",
+      bgColor:"#080500", coordColor:"rgba(255,215,0,0.7)",
+    };
+    case "silver": return {
+      xColor:"#e0e0e0", xGlow:"#909090", oColor:"#b0b8c8", oGlow:"#707888",
+      gridLine:"rgba(200,210,230,0.18)", gridBorder:"rgba(200,210,230,0.48)",
+      bgColor:"#07080f", coordColor:"rgba(180,190,210,0.6)",
+    };
+    default: return {
+      xColor:"#ff3333", xGlow:"#bb0000", oColor:"#3399ff", oGlow:"#0055bb",
+      gridLine:"rgba(75,125,215,0.26)", gridBorder:"rgba(75,125,215,0.58)",
+      bgColor:"#06091a", coordColor:"rgba(130,170,230,0.62)",
+    };
   }
 }
 
-function drawX(
-  ctx: CanvasRenderingContext2D,
-  cx: number, cy: number, r: number,
-  s: SkinConfig, skin: string, alpha = 1
-) {
-  ctx.save();
-  ctx.globalAlpha = alpha;
-  const off = r * 0.58;
-  ctx.lineCap = "round";
+function getLayout(W: number, H: number) {
+  const PL = W * 0.056; const PT = W * 0.046;
+  const PR = W * 0.02;  const PB = W * 0.018;
+  const GW = W - PL - PR; const GH = H - PT - PB;
+  const CW = GW / BOARD_SIZE; const CH = GH / BOARD_SIZE;
+  const R = Math.min(CW, CH) * 0.41;
+  return { PL, PT, PR, PB, GW, GH, CW, CH, R };
+}
 
+function cellCenter(row: number, col: number, L: ReturnType<typeof getLayout>) {
+  return { cx: L.PL + col * L.CW + L.CW / 2, cy: L.PT + row * L.CH + L.CH / 2 };
+}
+
+function hitCell(mx: number, my: number, W: number, H: number): [number, number] | null {
+  const L = getLayout(W, H);
+  const col = Math.floor((mx - L.PL) / L.CW);
+  const row = Math.floor((my - L.PT) / L.CH);
+  if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null;
+  return [row, col];
+}
+
+function drawX(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
+               s: SkinConfig, skin: string, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
+  const off = R * 0.57;
   if (skin === "cyberpunk") {
-    // Hexagonal outline
-    ctx.shadowColor = s.xGlow;
-    ctx.shadowBlur = 14;
-    ctx.strokeStyle = s.xColor;
-    ctx.lineWidth = 1.5;
+    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 12;
+    ctx.strokeStyle = s.xColor; ctx.lineWidth = 1.5;
     const sides = 6;
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
-      const angle = (Math.PI * 2 * i) / sides - Math.PI / 6;
-      const px = cx + r * 0.72 * Math.cos(angle);
-      const py = cy + r * 0.72 * Math.sin(angle);
+      const a = Math.PI * 2 * i / sides - Math.PI / 6;
+      const px = cx + R * 0.70 * Math.cos(a), py = cy + R * 0.70 * Math.sin(a);
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     }
-    ctx.closePath();
-    ctx.stroke();
-    // Inner X
-    ctx.shadowBlur = 10;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(cx - off * 0.5, cy - off * 0.5);
-    ctx.lineTo(cx + off * 0.5, cy + off * 0.5);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + off * 0.5, cy - off * 0.5);
-    ctx.lineTo(cx - off * 0.5, cy + off * 0.5);
-    ctx.stroke();
+    ctx.closePath(); ctx.stroke();
+    ctx.lineWidth = 1.8; ctx.shadowBlur = 8;
+    const o2 = off * 0.48;
+    ctx.beginPath(); ctx.moveTo(cx-o2,cy-o2); ctx.lineTo(cx+o2,cy+o2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+o2,cy-o2); ctx.lineTo(cx-o2,cy+o2); ctx.stroke();
   } else {
-    // Standard glowing X
-    // Glow layer
-    ctx.shadowColor = s.xGlow;
-    ctx.shadowBlur = 22;
-    ctx.strokeStyle = s.xColor;
-    ctx.lineWidth = r * 0.3;
-    ctx.beginPath();
-    ctx.moveTo(cx - off, cy - off);
-    ctx.lineTo(cx + off, cy + off);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + off, cy - off);
-    ctx.lineTo(cx - off, cy + off);
-    ctx.stroke();
-    // Bright core
-    ctx.shadowBlur = 8;
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.lineWidth = r * 0.1;
-    ctx.beginPath();
-    ctx.moveTo(cx - off, cy - off);
-    ctx.lineTo(cx + off, cy + off);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(cx + off, cy - off);
-    ctx.lineTo(cx - off, cy + off);
-    ctx.stroke();
+    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 24;
+    ctx.strokeStyle = s.xColor; ctx.lineWidth = R * 0.30;
+    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
+    ctx.shadowBlur = 7; ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = R * 0.09;
+    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
   }
   ctx.restore();
 }
 
-function drawO(
-  ctx: CanvasRenderingContext2D,
-  cx: number, cy: number, r: number,
-  s: SkinConfig, skin: string, alpha = 1
-) {
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
+function drawO(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
+               s: SkinConfig, skin: string, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha;
   if (skin === "cyberpunk") {
-    // Octagonal outline
     const sides = 8;
-    ctx.shadowColor = s.oGlow;
-    ctx.shadowBlur = 14;
-    ctx.strokeStyle = s.oColor;
-    ctx.lineWidth = 1.5;
+    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 12;
+    ctx.strokeStyle = s.oColor; ctx.lineWidth = 1.5;
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
-      const angle = (Math.PI * 2 * i) / sides;
-      const px = cx + r * 0.72 * Math.cos(angle);
-      const py = cy + r * 0.72 * Math.sin(angle);
+      const a = Math.PI * 2 * i / sides;
+      const px = cx + R * 0.70 * Math.cos(a), py = cy + R * 0.70 * Math.sin(a);
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     }
-    ctx.closePath();
-    ctx.stroke();
-    // Inner dot
-    ctx.fillStyle = s.oColor;
-    ctx.shadowBlur = 10;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.15, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.closePath(); ctx.stroke();
+    ctx.fillStyle = s.oColor; ctx.shadowBlur = 8;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.14, 0, Math.PI * 2); ctx.fill();
   } else {
-    // Standard glowing O
-    ctx.shadowColor = s.oGlow;
-    ctx.shadowBlur = 22;
-    ctx.strokeStyle = s.oColor;
-    ctx.lineWidth = r * 0.26;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.58, 0, Math.PI * 2);
-    ctx.stroke();
-    // Bright core ring
-    ctx.shadowBlur = 8;
-    ctx.strokeStyle = "rgba(255,255,255,0.5)";
-    ctx.lineWidth = r * 0.08;
-    ctx.beginPath();
-    ctx.arc(cx, cy, r * 0.58, 0, Math.PI * 2);
-    ctx.stroke();
+    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 24;
+    ctx.strokeStyle = s.oColor; ctx.lineWidth = R * 0.27;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI * 2); ctx.stroke();
+    ctx.shadowBlur = 7; ctx.strokeStyle = "rgba(255,255,255,0.48)"; ctx.lineWidth = R * 0.08;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI * 2); ctx.stroke();
   }
   ctx.restore();
 }
 
-export default function GameCanvas({
-  board, onMove, myPiece, currentTurn, winLine,
-  status, skin, aiHint, danmakuMessages,
-}: Props) {
+function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
+                   piece: 1 | 2, s: SkinConfig, skin: string, alpha = 1) {
+  if (piece === 1) drawX(ctx, cx, cy, R, s, skin, alpha);
+  else             drawO(ctx, cx, cy, R, s, skin, alpha);
+}
+
+export default function GameCanvas({ board, onMove, myPiece, currentTurn,
+  winLine, status, skin, aiHint, danmakuMessages }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const rafRef = useRef<number>(0);
+  const rafRef    = useRef<number>(0);
   const danmakuXRef = useRef<Map<string, number>>(new Map());
-  const hoverRef = useRef<[number, number] | null>(null);
-  const pulseRef = useRef(0);
+  const hoverRef  = useRef<[number, number] | null>(null);
+  const pendingRef = useRef<[number, number] | null>(null); // confirmed-pending cell
+  const pulseRef  = useRef(0);
 
-  // ─── layout helpers ─────────────────────────────────────────────────────────
-  function getLayout(W: number, H: number) {
-    const PAD_LEFT = W * 0.055;    // space for row numbers
-    const PAD_TOP  = W * 0.045;    // space for column letters
-    const PAD_RIGHT  = W * 0.02;
-    const PAD_BOTTOM = W * 0.02;
-    const GRID_W = W - PAD_LEFT - PAD_RIGHT;
-    const GRID_H = H - PAD_TOP  - PAD_BOTTOM;
-    const CW = GRID_W / BOARD_SIZE;
-    const CH = GRID_H / BOARD_SIZE;
-    const R  = Math.min(CW, CH) * 0.42;
-    return { PAD_LEFT, PAD_TOP, PAD_RIGHT, PAD_BOTTOM, GRID_W, GRID_H, CW, CH, R };
-  }
-
-  function cellCenter(row: number, col: number, layout: ReturnType<typeof getLayout>) {
-    const { PAD_LEFT, PAD_TOP, CW, CH } = layout;
-    return {
-      cx: PAD_LEFT + col * CW + CW / 2,
-      cy: PAD_TOP  + row * CH + CH / 2,
-    };
-  }
-
-  function getCellFromXY(mx: number, my: number, W: number, H: number) {
-    const { PAD_LEFT, PAD_TOP, CW, CH } = getLayout(W, H);
-    const col = Math.floor((mx - PAD_LEFT) / CW);
-    const row = Math.floor((my - PAD_TOP)  / CH);
-    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null;
-    return [row, col] as [number, number];
-  }
-
-  // ─── draw loop ──────────────────────────────────────────────────────────────
+  // ─── draw loop ───────────────────────────────────────────────────────────────
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
-
-    const W = canvas.width;
-    const H = canvas.height;
-    const layout = getLayout(W, H);
-    const { PAD_LEFT, PAD_TOP, GRID_W, GRID_H, CW, CH, R } = layout;
-
+    const W = canvas.width, H = canvas.height;
+    const L = getLayout(W, H);
+    const { PL, PT, GW, GH, CW, CH, R } = L;
     pulseRef.current += 0.045;
     const pulse = Math.sin(pulseRef.current);
-
     const s = getSkin(skin);
 
-    // ── background ──
-    ctx.fillStyle = s.bgColor;
-    ctx.fillRect(0, 0, W, H);
+    // background
+    ctx.fillStyle = s.bgColor; ctx.fillRect(0, 0, W, H);
+    const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.65);
+    gr.addColorStop(0, "rgba(30,60,140,0.07)"); gr.addColorStop(1, "transparent");
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
 
-    // subtle nebula glow
-    const grad = ctx.createRadialGradient(W / 2, H / 2, 0, W / 2, H / 2, W * 0.7);
-    grad.addColorStop(0, "rgba(30,60,140,0.08)");
-    grad.addColorStop(1, "transparent");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, W, H);
-
-    // ── coordinate labels ──
-    const fontSize = Math.max(9, Math.min(CW * 0.38, 14));
-    ctx.font = `600 ${fontSize}px 'Orbitron','Share Tech Mono',monospace`;
+    // coordinates
+    const fs = Math.max(8, Math.min(CW * 0.36, 13));
+    ctx.font = `600 ${fs}px 'Orbitron','Share Tech Mono',monospace`;
     ctx.fillStyle = s.coordColor;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "bottom";
-    for (let c = 0; c < BOARD_SIZE; c++) {
-      ctx.fillText(
-        COORD_LETTERS[c],
-        PAD_LEFT + c * CW + CW / 2,
-        PAD_TOP - 3
-      );
-    }
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      ctx.fillText(
-        String(r + 1),
-        PAD_LEFT - 4,
-        PAD_TOP + r * CH + CH / 2
-      );
-    }
+    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
+    for (let c = 0; c < BOARD_SIZE; c++)
+      ctx.fillText(COORD_LETTERS[c], PL + c * CW + CW / 2, PT - 2);
+    ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let r = 0; r < BOARD_SIZE; r++)
+      ctx.fillText(String(r + 1), PL - 3, PT + r * CH + CH / 2);
 
-    // ── grid cells (subtle bg tint per cell, alternating) ──
-    // skip to avoid visual noise — just draw lines
-
-    // ── grid lines ──
-    ctx.strokeStyle = s.gridLine;
-    ctx.lineWidth = 0.7;
+    // grid
+    ctx.strokeStyle = s.gridLine; ctx.lineWidth = 0.65;
     for (let i = 0; i <= BOARD_SIZE; i++) {
-      const x = PAD_LEFT + i * CW;
-      const y = PAD_TOP  + i * CH;
-      ctx.beginPath(); ctx.moveTo(x, PAD_TOP);            ctx.lineTo(x, PAD_TOP + GRID_H);  ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(PAD_LEFT, y);           ctx.lineTo(PAD_LEFT + GRID_W, y); ctx.stroke();
+      const x = PL + i * CW, y = PT + i * CH;
+      ctx.beginPath(); ctx.moveTo(x, PT);  ctx.lineTo(x, PT + GH); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PL, y);  ctx.lineTo(PL + GW, y); ctx.stroke();
     }
+    ctx.strokeStyle = s.gridBorder; ctx.lineWidth = 1.5;
+    ctx.strokeRect(PL, PT, GW, GH);
 
-    // ── board border ──
-    ctx.strokeStyle = s.gridBorder;
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(PAD_LEFT, PAD_TOP, GRID_W, GRID_H);
-
-    // ── win line highlight ──
+    // win line
     if (winLine && winLine.length >= 2) {
-      const first = winLine[0];
-      const last  = winLine[winLine.length - 1];
-      const { cx: x0, cy: y0 } = cellCenter(first[0], first[1], layout);
-      const { cx: x1, cy: y1 } = cellCenter(last[0],  last[1],  layout);
-      const glowA = 0.6 + Math.abs(pulse) * 0.4;
+      const { cx: x0, cy: y0 } = cellCenter(winLine[0][0], winLine[0][1], L);
+      const { cx: x1, cy: y1 } = cellCenter(winLine[winLine.length-1][0], winLine[winLine.length-1][1], L);
+      const gA = 0.55 + Math.abs(pulse) * 0.45;
       ctx.save();
-      ctx.shadowColor = "#ffffff";
-      ctx.shadowBlur = 20 + Math.abs(pulse) * 12;
-      ctx.strokeStyle = `rgba(255,255,255,${glowA})`;
-      ctx.lineWidth = Math.max(CW * 0.22, 4);
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.stroke();
+      ctx.shadowColor = "#fff"; ctx.shadowBlur = 18 + Math.abs(pulse) * 14;
+      ctx.strokeStyle = `rgba(255,255,255,${gA})`; ctx.lineWidth = Math.max(CW * 0.2, 3.5);
+      ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
       ctx.restore();
     }
 
-    // ── pieces ──
+    // placed pieces
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
         const cell = board[r]?.[c];
         if (!cell) continue;
-        const { cx, cy } = cellCenter(r, c, layout);
-        if (cell === 1) drawX(ctx, cx, cy, R, s, skin);
-        else            drawO(ctx, cx, cy, R, s, skin);
+        const { cx, cy } = cellCenter(r, c, L);
+        drawPiece(ctx, cx, cy, R, cell as 1 | 2, s, skin);
       }
     }
 
-    // ── AI hint (only visible to cheat user) ──
+    // AI hint
     if (aiHint && status === "playing") {
       const [hr, hc] = aiHint;
-      const { cx, cy } = cellCenter(hr, hc, layout);
-      const glowA = (Math.sin(pulseRef.current * 2.5) + 1) / 2;
+      const { cx, cy } = cellCenter(hr, hc, L);
+      const gA = (Math.sin(pulseRef.current * 2.8) + 1) / 2;
       ctx.save();
-      ctx.shadowColor = "#ffee00";
-      ctx.shadowBlur = 24 + glowA * 18;
-      // outer ring
-      ctx.strokeStyle = `rgba(255,230,0,${0.65 + glowA * 0.35})`;
-      ctx.lineWidth = 2;
+      ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 22 + gA * 16;
+      ctx.strokeStyle = `rgba(255,230,0,${0.6 + gA * 0.4})`; ctx.lineWidth = 2;
       ctx.setLineDash([5, 4]);
-      ctx.beginPath();
-      ctx.arc(cx, cy, R * 0.75, 0, Math.PI * 2);
-      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.76, 0, Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]);
-      // inner dot
-      ctx.fillStyle = `rgba(255,240,0,${0.45 + glowA * 0.4})`;
-      ctx.beginPath();
-      ctx.arc(cx, cy, R * 0.18, 0, Math.PI * 2);
-      ctx.fill();
-      // corner rays
+      ctx.fillStyle = `rgba(255,240,0,${0.4 + gA * 0.45})`;
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.18, 0, Math.PI * 2); ctx.fill();
       for (let i = 0; i < 4; i++) {
-        const angle = Math.PI / 4 + (Math.PI / 2) * i;
-        ctx.strokeStyle = `rgba(255,240,0,${0.5 + glowA * 0.4})`;
-        ctx.lineWidth = 1.5;
+        const a = Math.PI / 4 + Math.PI / 2 * i;
+        ctx.strokeStyle = `rgba(255,240,0,${0.45 + gA * 0.4})`; ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(angle) * R * 0.85, cy + Math.sin(angle) * R * 0.85);
-        ctx.lineTo(cx + Math.cos(angle) * R * 1.15, cy + Math.sin(angle) * R * 1.15);
+        ctx.moveTo(cx + Math.cos(a) * R * 0.86, cy + Math.sin(a) * R * 0.86);
+        ctx.lineTo(cx + Math.cos(a) * R * 1.16, cy + Math.sin(a) * R * 1.16);
         ctx.stroke();
       }
       ctx.restore();
     }
 
-    // ── hover preview ──
+    const canAct = status === "playing" && currentTurn === myPiece;
+
+    // pending cell (confirmed-pending, waiting for second click)
+    const pending = pendingRef.current;
+    if (pending && canAct && board[pending[0]]?.[pending[1]] === 0) {
+      const { cx, cy } = cellCenter(pending[0], pending[1], L);
+      // draw piece at ~65% opacity
+      drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.65);
+      // confirmation ring
+      const ringA = 0.55 + Math.abs(pulse) * 0.45;
+      ctx.save();
+      ctx.shadowColor = myPiece === 1 ? s.xGlow : s.oGlow;
+      ctx.shadowBlur = 14;
+      ctx.strokeStyle = myPiece === 1
+        ? `rgba(255,100,100,${ringA})` : `rgba(80,160,255,${ringA})`;
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      // "tap to confirm" tick marks at corners
+      for (let i = 0; i < 4; i++) {
+        const a = Math.PI / 4 + Math.PI / 2 * i;
+        ctx.lineWidth = 2; ctx.strokeStyle = `rgba(255,255,255,${0.45 + ringA * 0.35})`;
+        ctx.beginPath();
+        ctx.moveTo(cx + Math.cos(a) * R * 0.94, cy + Math.sin(a) * R * 0.94);
+        ctx.lineTo(cx + Math.cos(a) * R * 1.18, cy + Math.sin(a) * R * 1.18);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+
+    // hover ghost (25% opacity, only when no pending or hovering different cell)
     const hover = hoverRef.current;
-    if (hover && status === "playing" && currentTurn === myPiece) {
-      const [hr, hc] = hover;
-      if (board[hr]?.[hc] === 0) {
-        const { cx, cy } = cellCenter(hr, hc, layout);
-        if (myPiece === 1) drawX(ctx, cx, cy, R, s, skin, 0.3);
-        else               drawO(ctx, cx, cy, R, s, skin, 0.3);
+    if (hover && canAct && board[hover[0]]?.[hover[1]] === 0) {
+      const isPending = pending && pending[0] === hover[0] && pending[1] === hover[1];
+      if (!isPending) {
+        const { cx, cy } = cellCenter(hover[0], hover[1], L);
+        drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.22);
       }
     }
 
-    // ── danmaku ──
+    // danmaku
     danmakuMessages.forEach(msg => {
-      if (!danmakuXRef.current.has(msg.id)) {
+      if (!danmakuXRef.current.has(msg.id))
         danmakuXRef.current.set(msg.id, W + 60);
-      }
       const curX = (danmakuXRef.current.get(msg.id) ?? W + 60) - 2.2;
       danmakuXRef.current.set(msg.id, curX);
-
       if (curX < -600) { danmakuXRef.current.delete(msg.id); return; }
-
       const alpha = curX > W - 100 ? Math.min(1, (W + 60 - curX) / 80)
-                  : curX < 0       ? Math.max(0, (curX + 300) / 300)
-                  : 1;
-
+                  : curX < 0       ? Math.max(0, (curX + 300) / 300) : 1;
+      const fz = Math.min(CH * 0.52, 15);
       ctx.save();
-      ctx.globalAlpha = alpha * 0.92;
-      const fs = Math.min(CH * 0.55, 16);
-      ctx.font = `700 ${fs}px 'Orbitron','Share Tech Mono',monospace`;
-      ctx.shadowColor = msg.color;
-      ctx.shadowBlur = 10;
-      ctx.fillStyle = msg.color;
-      ctx.textBaseline = "middle";
-      // subtle dark outline for readability
-      ctx.strokeStyle = "rgba(0,0,0,0.5)";
-      ctx.lineWidth = 3;
+      ctx.globalAlpha = alpha * 0.9;
+      ctx.font = `700 ${fz}px 'Orbitron','Share Tech Mono',monospace`;
+      ctx.shadowColor = msg.color; ctx.shadowBlur = 10;
+      ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = 3;
       ctx.strokeText(msg.text, curX, msg.y);
+      ctx.fillStyle = msg.color; ctx.textBaseline = "middle";
       ctx.fillText(msg.text, curX, msg.y);
       ctx.restore();
     });
@@ -416,25 +293,21 @@ export default function GameCanvas({
     rafRef.current = requestAnimationFrame(draw);
   }, [board, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages]);
 
-  // ─── RAF management ─────────────────────────────────────────────────────────
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
   }, [draw]);
 
-  // ─── resize ─────────────────────────────────────────────────────────────────
+  // resize
   useEffect(() => {
     function resize() {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const container = canvas.parentElement;
       if (!container) return;
-      // Fill as much of the container as possible (square)
-      const available = Math.min(container.clientWidth, container.clientHeight);
-      const size = Math.floor(available * 0.98);
+      const size = Math.floor(Math.min(container.clientWidth, container.clientHeight) * 0.98);
       if (canvas.width !== size || canvas.height !== size) {
-        canvas.width  = size;
-        canvas.height = size;
+        canvas.width = size; canvas.height = size;
       }
     }
     resize();
@@ -442,34 +315,80 @@ export default function GameCanvas({
     const container = canvasRef.current?.parentElement;
     if (container) ro.observe(container);
     window.addEventListener("resize", resize);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", resize);
-    };
+    return () => { ro.disconnect(); window.removeEventListener("resize", resize); };
   }, []);
 
-  // ─── event handlers ─────────────────────────────────────────────────────────
-  function getCellFromEvent(e: React.MouseEvent<HTMLCanvasElement>) {
+  // ─── input helpers ───────────────────────────────────────────────────────────
+  function getCell(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width  / rect.width;
+    const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    const mx = (e.clientX - rect.left) * scaleX;
-    const my = (e.clientY - rect.top)  * scaleY;
-    return getCellFromXY(mx, my, canvas.width, canvas.height);
+    let clientX: number, clientY: number;
+    if ("touches" in e) {
+      if (e.touches.length === 0) return null;
+      clientX = e.touches[0].clientX; clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX; clientY = e.clientY;
+    }
+    const mx = (clientX - rect.left) * scaleX;
+    const my = (clientY - rect.top)  * scaleY;
+    return hitCell(mx, my, canvas.width, canvas.height);
   }
 
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    const cell = getCellFromEvent(e);
-    if (cell) onMove(cell[0], cell[1]);
+    if (status !== "playing" || currentTurn !== myPiece) return;
+    const cell = getCell(e);
+    if (!cell) return;
+    const [r, c] = cell;
+    if (board[r]?.[c] !== 0) return;
+
+    const pending = pendingRef.current;
+    if (pending && pending[0] === r && pending[1] === c) {
+      // second click on same cell → confirm
+      pendingRef.current = null;
+      onMove(r, c);
+    } else {
+      // first click or different cell → set pending
+      pendingRef.current = [r, c];
+    }
+  }
+
+  function handleTouchEnd(e: React.TouchEvent<HTMLCanvasElement>) {
+    e.preventDefault();
+    if (status !== "playing" || currentTurn !== myPiece) return;
+    // use changedTouches for touch end
+    const canvas = canvasRef.current;
+    if (!canvas || e.changedTouches.length === 0) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const t = e.changedTouches[0];
+    const mx = (t.clientX - rect.left) * scaleX;
+    const my = (t.clientY - rect.top)  * scaleY;
+    const cell = hitCell(mx, my, canvas.width, canvas.height);
+    if (!cell) return;
+    const [r, c] = cell;
+    if (board[r]?.[c] !== 0) return;
+
+    const pending = pendingRef.current;
+    if (pending && pending[0] === r && pending[1] === c) {
+      pendingRef.current = null;
+      onMove(r, c);
+    } else {
+      pendingRef.current = [r, c];
+    }
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
-    hoverRef.current = getCellFromEvent(e);
+    hoverRef.current = getCell(e);
   }
 
   function handleMouseLeave() { hoverRef.current = null; }
+
+  // clear pending when turn changes
+  useEffect(() => { pendingRef.current = null; }, [currentTurn, status]);
 
   return (
     <canvas
@@ -478,6 +397,7 @@ export default function GameCanvas({
       onClick={handleClick}
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
+      onTouchEnd={handleTouchEnd}
       style={{ cursor: status === "playing" && currentTurn === myPiece ? "crosshair" : "default" }}
     />
   );
