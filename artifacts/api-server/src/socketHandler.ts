@@ -1,7 +1,7 @@
 import { Server as SocketIOServer, Socket } from "socket.io";
 import {
   createRoom, getRoom, joinRoom, makeMove,
-  resetGame, getAIMove, cleanupOldRooms, setTurnTime,
+  resetGame, getAIMove, cleanupOldRooms, setTurnTime, skipTurn,
 } from "./game";
 import { logger } from "./lib/logger";
 
@@ -45,6 +45,13 @@ export function setupSocketIO(io: SocketIOServer) {
         const room = resetGame(data.roomId, data.firstPiece);
         if (room) io.to(data.roomId).emit("room_updated", room);
       } catch (e) { logger.error(e, "reset_game"); }
+    });
+
+    socket.on("skip_turn", (data: { roomId: string; piece: 1 | 2 }) => {
+      try {
+        const room = skipTurn(data.roomId, data.piece);
+        if (room) io.to(data.roomId).emit("room_updated", room);
+      } catch (e) { logger.error(e, "skip_turn"); }
     });
 
     socket.on("set_turn_time", (data: { roomId: string; seconds: number }) => {

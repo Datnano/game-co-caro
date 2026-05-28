@@ -50,6 +50,7 @@ export default function GamePage() {
   const prevTurnRef = useRef<1 | 2 | null>(null);
   const prevStatusRef = useRef<string>("");
   const joinedRef = useRef(false);
+  const timeoutFiredRef = useRef(false); // prevent duplicate skip_turn
   const isMyTurn = room?.status === "playing" && room.currentTurn === myPiece;
   const amLoser = room?.status === "finished" && room.winner !== 0 && room.winner !== myPiece;
 
@@ -118,12 +119,21 @@ export default function GamePage() {
     }
     if (prevTurnRef.current !== room.currentTurn) {
       prevTurnRef.current = room.currentTurn;
+      timeoutFiredRef.current = false;
       setTimer(room.turnTime ?? 30);
     }
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = setInterval(() => {
       setTimer(t => {
-        if (t <= 1) { clearInterval(timerRef.current!); return 0; }
+        if (t <= 1) {
+          clearInterval(timerRef.current!);
+          // auto-skip: only the player whose turn it is sends this once
+          if (isMyTurn && !timeoutFiredRef.current) {
+            timeoutFiredRef.current = true;
+            getSocket().emit("skip_turn", { roomId, piece: myPiece });
+          }
+          return 0;
+        }
         if (t <= 6 && isMyTurn) playTick();
         return t - 1;
       });
@@ -213,6 +223,10 @@ export default function GamePage() {
 
         {/* Row 1 */}
         <div className="header-row1">
+          <button className="lobby-back-btn" onClick={() => navigate("/")} title="Quay lại sảnh">
+            ← Sảnh
+          </button>
+
           <div className="room-key-badge">
             <span className="badge-label">KEY</span>
             <span className="badge-sep">:</span>

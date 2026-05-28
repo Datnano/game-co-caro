@@ -108,6 +108,14 @@ export function resetGame(roomId: string, firstPiece?: 1 | 2): GameRoom | null {
   return room;
 }
 
+export function skipTurn(roomId: string, piece: 1 | 2): GameRoom | null {
+  const room = rooms.get(roomId);
+  if (!room || room.status !== "playing") return null;
+  if (room.currentTurn !== piece) return null; // only the current player can skip
+  room.currentTurn = room.currentTurn === 1 ? 2 : 1;
+  return room;
+}
+
 export function setTurnTime(roomId: string, seconds: number): GameRoom | null {
   const room = rooms.get(roomId);
   if (!room) return null;
