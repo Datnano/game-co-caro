@@ -15,6 +15,7 @@ export interface GameRoom {
   lastLoser: 0 | 1 | 2;
   scores: { 1: number; 2: number };
   createdAt: number;
+  turnTime: number; // seconds per turn
 }
 
 export interface Player {
@@ -39,7 +40,7 @@ function randomCode(len = 6): string {
   ).join("");
 }
 
-export function createRoom(): GameRoom {
+export function createRoom(turnTime = 30): GameRoom {
   let id = randomCode();
   while (rooms.has(id)) id = randomCode();
 
@@ -55,6 +56,7 @@ export function createRoom(): GameRoom {
     lastLoser: 0,
     scores: { 1: 0, 2: 0 },
     createdAt: Date.now(),
+    turnTime: Math.min(Math.max(turnTime, 10), 300),
   };
   rooms.set(id, room);
   return room;
@@ -153,6 +155,13 @@ export function resetGame(roomId: string): GameRoom | null {
   return room;
 }
 
+export function setTurnTime(roomId: string, seconds: number): GameRoom | null {
+  const room = rooms.get(roomId);
+  if (!room) return null;
+  room.turnTime = Math.min(Math.max(seconds, 10), 300);
+  return room;
+}
+
 export function checkWin(
   board: CellValue[][],
   row: number,
@@ -160,25 +169,20 @@ export function checkWin(
   piece: CellValue
 ): [number, number][] | null {
   const directions = [
-    [0, 1],
-    [1, 0],
-    [1, 1],
-    [1, -1],
+    [0, 1], [1, 0], [1, 1], [1, -1],
   ];
 
   for (const [dr, dc] of directions) {
     const line: [number, number][] = [[row, col]];
 
     for (let i = 1; i < WIN_COUNT; i++) {
-      const r = row + dr * i;
-      const c = col + dc * i;
+      const r = row + dr * i; const c = col + dc * i;
       if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) break;
       if (board[r][c] !== piece) break;
       line.push([r, c]);
     }
     for (let i = 1; i < WIN_COUNT; i++) {
-      const r = row - dr * i;
-      const c = col - dc * i;
+      const r = row - dr * i; const c = col - dc * i;
       if (r < 0 || r >= BOARD_SIZE || c < 0 || c >= BOARD_SIZE) break;
       if (board[r][c] !== piece) break;
       line.push([r, c]);
@@ -189,28 +193,19 @@ export function checkWin(
   return null;
 }
 
-export function getAIMove(
-  board: CellValue[][],
-  myPiece: 1 | 2
-): [number, number] {
-  const opponent: CellValue = myPiece === 1 ? 2 : 1;
-  let bestScore = -Infinity;
-  let bestMove: [number, number] = [9, 9];
-
+export function getAIMove(board: CellValue[][], myPiece: 1 | 2): [number, number] {
   const candidates = getCandidates(board);
   if (candidates.length === 0) return [9, 9];
 
+  let bestScore = -Infinity;
+  let bestMove: [number, number] = candidates[0];
+
   for (const [r, c] of candidates) {
     board[r][c] = myPiece;
-    const score = scoreBoard(board, myPiece, opponent);
+    const score = scoreBoard(board, myPiece);
     board[r][c] = 0;
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMove = [r, c];
-    }
+    if (score > bestScore) { bestScore = score; bestMove = [r, c]; }
   }
-
   return bestMove;
 }
 
@@ -221,56 +216,37 @@ function getCandidates(board: CellValue[][]): [number, number][] {
 
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      if (board[r][c] !== 0) {
-        hasAny = true;
-        for (let dr = -2; dr <= 2; dr++) {
-          for (let dc = -2; dc <= 2; dc++) {
-            const nr = r + dr;
-            const nc = c + dc;
-            const key = `${nr},${nc}`;
-            if (
-              nr >= 0 &&
-              nr < BOARD_SIZE &&
-              nc >= 0 &&
-              nc < BOARD_SIZE &&
-              board[nr][nc] === 0 &&
-              !visited.has(key)
-            ) {
-              visited.add(key);
-              candidates.push([nr, nc]);
-            }
+      if (board[r][c] === 0) continue;
+      hasAny = true;
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const nr = r + dr; const nc = c + dc;
+          const key = `${nr},${nc}`;
+          if (nr >= 0 && nr < BOARD_SIZE && nc >= 0 && nc < BOARD_SIZE &&
+              board[nr][nc] === 0 && !visited.has(key)) {
+            visited.add(key);
+            candidates.push([nr, nc]);
           }
         }
       }
     }
   }
 
-  if (!hasAny) return [[9, 9]];
-  return candidates;
+  return hasAny ? candidates : [[9, 9]];
 }
 
-function scoreBoard(
-  board: CellValue[][],
-  myPiece: 1 | 2,
-  opponent: CellValue
-): number {
+function scoreBoard(board: CellValue[][], myPiece: 1 | 2): number {
+  const opponent: CellValue = myPiece === 1 ? 2 : 1;
   let score = 0;
-  const directions = [
-    [0, 1],
-    [1, 0],
-    [1, 1],
-    [1, -1],
-  ];
+  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
 
   for (let r = 0; r < BOARD_SIZE; r++) {
     for (let c = 0; c < BOARD_SIZE; c++) {
-      if (board[r][c] === 0) continue;
-      const piece = board[r][c];
-      const isMe = piece === myPiece;
-
-      for (const [dr, dc] of directions) {
-        const lineScore = evalLine(board, r, c, dr, dc, piece, myPiece);
-        score += isMe ? lineScore : -lineScore * 1.1;
+      const cell = board[r][c];
+      if (cell === 0) continue;
+      for (const [dr, dc] of dirs) {
+        const ls = evalLine(board, r, c, dr, dc, cell);
+        score += cell === myPiece ? ls : -ls * 1.15;
       }
     }
   }
@@ -278,43 +254,23 @@ function scoreBoard(
 }
 
 function evalLine(
-  board: CellValue[][],
-  r: number,
-  c: number,
-  dr: number,
-  dc: number,
-  piece: CellValue,
-  myPiece: CellValue
+  board: CellValue[][], r: number, c: number,
+  dr: number, dc: number, piece: CellValue
 ): number {
-  let count = 0;
-  let openEnds = 0;
-
+  let count = 0; let openEnds = 0;
   for (let i = 0; i < WIN_COUNT; i++) {
-    const nr = r + dr * i;
-    const nc = c + dc * i;
+    const nr = r + dr * i; const nc = c + dc * i;
     if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
     if (board[nr][nc] === piece) count++;
-    else if (board[nr][nc] === 0) {
-      openEnds++;
-      break;
-    } else break;
+    else if (board[nr][nc] === 0) { openEnds++; break; }
+    else break;
   }
-
-  const pr = r - dr;
-  const pc = c - dc;
-  if (
-    pr >= 0 &&
-    pr < BOARD_SIZE &&
-    pc >= 0 &&
-    pc < BOARD_SIZE &&
-    board[pr][pc] === 0
-  ) {
-    openEnds++;
-  }
+  const pr = r - dr; const pc = c - dc;
+  if (pr >= 0 && pr < BOARD_SIZE && pc >= 0 && pc < BOARD_SIZE && board[pr][pc] === 0) openEnds++;
 
   if (count >= 5) return 100000;
   if (count === 4 && openEnds >= 1) return 10000;
-  if (count === 4 && openEnds === 0) return 1000;
+  if (count === 4) return 1000;
   if (count === 3 && openEnds === 2) return 500;
   if (count === 3 && openEnds === 1) return 100;
   if (count === 2 && openEnds === 2) return 50;
