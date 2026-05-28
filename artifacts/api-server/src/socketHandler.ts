@@ -11,9 +11,9 @@ export function setupSocketIO(io: SocketIOServer) {
   io.on("connection", (socket: Socket) => {
     logger.info({ socketId: socket.id }, "Client connected");
 
-    socket.on("create_room", (data: { name: string; sessionId: string; turnTime?: number }, cb) => {
+    socket.on("create_room", (data: { name: string; sessionId: string; turnTime?: number; boardSize?: number }, cb) => {
       try {
-        const room = createRoom(data.turnTime ?? 30);
+        const room = createRoom(data.turnTime ?? 30, data.boardSize ?? 20);
         const result = joinRoom(room.id, socket.id, data.name, data.sessionId);
         if ("error" in result) return cb({ error: result.error });
         socket.join(room.id);
@@ -71,7 +71,7 @@ export function setupSocketIO(io: SocketIOServer) {
       try {
         const room = getRoom(data.roomId);
         if (!room) return cb({ error: "Phòng không tồn tại" });
-        const move = getAIMove(room.board, data.piece);
+        const move = getAIMove(room.board, data.piece, room.boardSize, room.winCount);
         cb({ move });
       } catch (e) { logger.error(e, "get_ai_hint"); cb({ error: "Lỗi AI" }); }
     });

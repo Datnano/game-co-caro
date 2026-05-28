@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useLocation } from "wouter";
 import { getSocket } from "@/lib/socket";
 import GameCanvas from "@/components/GameCanvas";
-import ChatPanel from "@/components/ChatPanel";
+import ChatPanel, { ChatMsg } from "@/components/ChatPanel";
 import PostGameModal from "@/components/PostGameModal";
 import { useSound } from "@/hooks/useSound";
 
@@ -17,6 +17,8 @@ export interface GameRoom {
   moveCount: number;
   scores: { 1: number; 2: number };
   turnTime: number;
+  boardSize: number;
+  winCount: number;
 }
 
 const TIME_OPTIONS = [15, 30, 60, 90, 120];
@@ -35,24 +37,25 @@ export default function GamePage() {
   const [showTimeMenu, setShowTimeMenu] = useState(false);
   const [showPostGame, setShowPostGame] = useState(false);
   const [timer, setTimer] = useState(30);
+  const [chatHistory, setChatHistory] = useState<ChatMsg[]>([]);
   const [danmakuMessages, setDanmakuMessages] = useState<
     Array<{ id: string; text: string; color: string; y: number; startX: number }>
   >([]);
 
   const myName = localStorage.getItem("gomoku_name") || "";
   const isThanhDat = myName === "Thành Đạt";
-  const skinRef = useRef(localStorage.getItem("gomoku_skin") || "classic");
-  const [activeSkin, setActiveSkin] = useState(skinRef.current);
+  const [activeSkin, setActiveSkin] = useState(localStorage.getItem("gomoku_skin") || "classic");
   const sessionId = localStorage.getItem("gomoku_session") || "";
   const { playPlace, playWin, playLose, playChat, playTick, playConfirm } = useSound();
 
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevTurnRef = useRef<1 | 2 | null>(null);
-  const prevStatusRef = useRef<string>("");
-  const joinedRef = useRef(false);
-  const timeoutFiredRef = useRef(false); // prevent duplicate skip_turn
+  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
+  const prevTurnRef     = useRef<1 | 2 | null>(null);
+  const prevStatusRef   = useRef<string>("");
+  const joinedRef       = useRef(false);
+  const timeoutFiredRef = useRef(false);
+
   const isMyTurn = room?.status === "playing" && room.currentTurn === myPiece;
-  const amLoser = room?.status === "finished" && room.winner !== 0 && room.winner !== myPiece;
+  const amLoser  = room?.status === "finished" && room.winner !== 0 && room.winner !== myPiece;
 
   // ── join room ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -74,7 +77,6 @@ export default function GamePage() {
             && prev.moveCount !== updatedRoom.moveCount) {
           playPlace();
         }
-        // Show post-game modal when game finishes
         if (prev?.status === "playing" && updatedRoom.status === "finished") {
           setTimeout(() => setShowPostGame(true), 800);
         }
@@ -82,9 +84,14 @@ export default function GamePage() {
       });
     });
 
-    socket.on("chat_message", (data: { name: string; message: string; color: string }) => {
+    socket.on("chat_message", (data: { name: string; message: string; color: string; timestamp: number }) => {
       playChat();
       const id = crypto.randomUUID();
+      // Chat history
+      setChatHistory(prev => [...prev.slice(-99), {
+        id, name: data.name, text: data.message, color: data.color, ts: data.timestamp,
+      }]);
+      // Danmaku
       const canvasEl = document.querySelector(".game-canvas") as HTMLCanvasElement | null;
       const canvasH = canvasEl?.clientHeight ?? 400;
       const y = 55 + Math.random() * (canvasH - 110);
@@ -127,7 +134,6 @@ export default function GamePage() {
       setTimer(t => {
         if (t <= 1) {
           clearInterval(timerRef.current!);
-          // auto-skip: only the player whose turn it is sends this once
           if (isMyTurn && !timeoutFiredRef.current) {
             timeoutFiredRef.current = true;
             getSocket().emit("skip_turn", { roomId, piece: myPiece });
@@ -141,7 +147,7 @@ export default function GamePage() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [room?.currentTurn, room?.status, room?.turnTime]);
 
-  // ── AI hint refresh after each move ───────────────────────────────────────
+  // ── AI hint refresh ────────────────────────────────────────────────────────
   useEffect(() => {
     if (cheatActive && room?.status === "playing" && isMyTurn) {
       getSocket().emit("get_ai_hint", { roomId, piece: myPiece }, (res: any) => {
@@ -174,13 +180,8 @@ export default function GamePage() {
   }, [cheatActive, isThanhDat, roomId, myPiece]);
 
   function handleReset(firstPiece?: 1 | 2, newSkin?: string) {
-    if (newSkin) {
-      localStorage.setItem("gomoku_skin", newSkin);
-      setActiveSkin(newSkin);
-    }
-    setShowPostGame(false);
-    setCheatActive(false);
-    setAiHint(null);
+    if (newSkin) { localStorage.setItem("gomoku_skin", newSkin); setActiveSkin(newSkin); }
+    setShowPostGame(false); setCheatActive(false); setAiHint(null);
     getSocket().emit("reset_game", { roomId, firstPiece });
   }
 
@@ -248,7 +249,7 @@ export default function GamePage() {
             )}
             {room.status === "finished" && (
               <span className="finished-text">
-                {room.winner === 0 ? "🤝 Hòa!" : room.winner === myPiece ? "🏆 Bạn thắng!" : "💀 Bạn thua!"}
+                {room.winner === 0 ? "🤝 Hòa!" : room.winner === myPiece ? "🏆 Thắng!" : "💀 Thua!"}
               </span>
             )}
           </div>
@@ -259,7 +260,7 @@ export default function GamePage() {
           <div className="header-actions">
             <div className="time-picker-wrap">
               <button className="icon-btn" onClick={() => setShowTimeMenu(v => !v)}>
-                ⏱ {room.turnTime}s
+                ⏱{room.turnTime}s
               </button>
               {showTimeMenu && (
                 <div className="time-dropdown">
@@ -273,16 +274,14 @@ export default function GamePage() {
               )}
             </div>
 
-            {/* CHEAT — only visible to "Thành Đạt" */}
             {isThanhDat && (
               <button className={`cheat-btn ${cheatActive ? "active" : ""}`} onClick={handleCheat}>
                 ⚡ CHEAT
               </button>
             )}
 
-            {/* Chơi lại button after game ends (for winner / draw) */}
             {room.status === "finished" && !amLoser && (
-              <button className="btn-reset" onClick={() => handleReset()}>↺ Chơi lại</button>
+              <button className="btn-reset" onClick={() => handleReset()}>↺ Lại</button>
             )}
           </div>
         </div>
@@ -295,7 +294,10 @@ export default function GamePage() {
             <span className="p-name">{p1?.name ?? "—"}</span>
             <span className="p-score">{room.scores[1]}</span>
           </div>
-          <div className="vs-badge">VS</div>
+          <div className="vs-badge">
+            <span>VS</span>
+            <span className="board-size-badge">{room.boardSize}×{room.boardSize}</span>
+          </div>
           <div className="player-card p2-card">
             <span className="p-score">{room.scores[2]}</span>
             <span className="p-name">{p2?.name ?? "Chờ..."}</span>
@@ -309,6 +311,7 @@ export default function GamePage() {
       <div className="canvas-area">
         <GameCanvas
           board={room.board}
+          boardSize={room.boardSize}
           onMove={handleMove}
           myPiece={myPiece}
           currentTurn={room.currentTurn}
@@ -321,10 +324,24 @@ export default function GamePage() {
       </div>
 
       {/* ═══ CHAT FAB ═══ */}
-      <button className="chat-fab" onClick={() => setShowChat(v => !v)}>💬</button>
+      <button
+        className={`chat-fab ${chatHistory.length > 0 && !showChat ? "has-msgs" : ""}`}
+        onClick={() => setShowChat(v => !v)}
+      >
+        💬
+        {chatHistory.length > 0 && !showChat && (
+          <span className="chat-fab-count">{Math.min(chatHistory.length, 99)}</span>
+        )}
+      </button>
+
       {showChat && (
-        <ChatPanel myName={myName} myPiece={myPiece}
-          onSend={handleSendChat} onClose={() => setShowChat(false)} />
+        <ChatPanel
+          myName={myName}
+          myPiece={myPiece}
+          history={chatHistory}
+          onSend={handleSendChat}
+          onClose={() => setShowChat(false)}
+        />
       )}
 
       {/* ═══ POST-GAME MODAL ═══ */}

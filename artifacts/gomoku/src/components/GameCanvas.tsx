@@ -1,7 +1,7 @@
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useRef, useEffect, useCallback } from "react";
 
-const BOARD_SIZE = 20;
-const COORD_LETTERS = "ABCDEFGHJKLMNOPQRSTU";
+// Dynamic coord letters (skip I)
+const ALPHA = "ABCDEFGHJKLMNOPQRSTUVWXYZ";
 
 interface DanmakuMsg {
   id: string; text: string; color: string; y: number; startX: number;
@@ -9,6 +9,7 @@ interface DanmakuMsg {
 
 interface Props {
   board: number[][];
+  boardSize: number;
   onMove: (row: number, col: number) => void;
   myPiece: 1 | 2;
   currentTurn: 1 | 2;
@@ -49,12 +50,19 @@ function getSkin(skin: string): SkinConfig {
   }
 }
 
-function getLayout(W: number, H: number) {
-  const PL = W * 0.056; const PT = W * 0.046;
-  const PR = W * 0.02;  const PB = W * 0.018;
-  const GW = W - PL - PR; const GH = H - PT - PB;
-  const CW = GW / BOARD_SIZE; const CH = GH / BOARD_SIZE;
-  const R = Math.min(CW, CH) * 0.41;
+function getLayout(W: number, H: number, boardSize: number) {
+  // More padding for coordinate labels; scale inversely with board size
+  const coordScale = Math.max(0.032, Math.min(0.056, 1.1 / boardSize));
+  const PL = W * coordScale * 1.6;
+  const PT = W * coordScale * 1.3;
+  const PR = W * 0.012;
+  const PB = W * 0.010;
+  const GW = W - PL - PR;
+  const GH = H - PT - PB;
+  const CW = GW / boardSize;
+  const CH = GH / boardSize;
+  // Bigger piece radius — 0.44 of the smaller cell dimension
+  const R = Math.min(CW, CH) * 0.44;
   return { PL, PT, PR, PB, GW, GH, CW, CH, R };
 }
 
@@ -62,11 +70,11 @@ function cellCenter(row: number, col: number, L: ReturnType<typeof getLayout>) {
   return { cx: L.PL + col * L.CW + L.CW / 2, cy: L.PT + row * L.CH + L.CH / 2 };
 }
 
-function hitCell(mx: number, my: number, W: number, H: number): [number, number] | null {
-  const L = getLayout(W, H);
+function hitCell(mx: number, my: number, W: number, H: number, boardSize: number): [number, number] | null {
+  const L = getLayout(W, H, boardSize);
   const col = Math.floor((mx - L.PL) / L.CW);
   const row = Math.floor((my - L.PT) / L.CH);
-  if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null;
+  if (row < 0 || row >= boardSize || col < 0 || col >= boardSize) return null;
   return [row, col];
 }
 
@@ -76,7 +84,7 @@ function drawX(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
   const off = R * 0.57;
   if (skin === "cyberpunk") {
     ctx.shadowColor = s.xGlow; ctx.shadowBlur = 12;
-    ctx.strokeStyle = s.xColor; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = s.xColor; ctx.lineWidth = Math.max(1.5, R * 0.12);
     const sides = 6;
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
@@ -85,7 +93,7 @@ function drawX(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     }
     ctx.closePath(); ctx.stroke();
-    ctx.lineWidth = 1.8; ctx.shadowBlur = 8;
+    ctx.lineWidth = Math.max(1.8, R * 0.14);
     const o2 = off * 0.48;
     ctx.beginPath(); ctx.moveTo(cx-o2,cy-o2); ctx.lineTo(cx+o2,cy+o2); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(cx+o2,cy-o2); ctx.lineTo(cx-o2,cy+o2); ctx.stroke();
@@ -107,7 +115,7 @@ function drawO(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
   if (skin === "cyberpunk") {
     const sides = 8;
     ctx.shadowColor = s.oGlow; ctx.shadowBlur = 12;
-    ctx.strokeStyle = s.oColor; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = s.oColor; ctx.lineWidth = Math.max(1.5, R * 0.12);
     ctx.beginPath();
     for (let i = 0; i < sides; i++) {
       const a = Math.PI * 2 * i / sides;
@@ -115,7 +123,7 @@ function drawO(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     }
     ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = s.oColor; ctx.shadowBlur = 8;
+    ctx.fillStyle = s.oColor;
     ctx.beginPath(); ctx.arc(cx, cy, R * 0.14, 0, Math.PI * 2); ctx.fill();
   } else {
     ctx.shadowColor = s.oGlow; ctx.shadowBlur = 24;
@@ -133,76 +141,73 @@ function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: num
   else             drawO(ctx, cx, cy, R, s, skin, alpha);
 }
 
-export default function GameCanvas({ board, onMove, myPiece, currentTurn,
+export default function GameCanvas({ board, boardSize, onMove, myPiece, currentTurn,
   winLine, status, skin, aiHint, danmakuMessages }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rafRef    = useRef<number>(0);
   const danmakuXRef = useRef<Map<string, number>>(new Map());
   const hoverRef  = useRef<[number, number] | null>(null);
-  const pendingRef = useRef<[number, number] | null>(null); // confirmed-pending cell
+  const pendingRef = useRef<[number, number] | null>(null);
   const pulseRef  = useRef(0);
 
-  // ─── draw loop ───────────────────────────────────────────────────────────────
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     const W = canvas.width, H = canvas.height;
-    const L = getLayout(W, H);
+    const L = getLayout(W, H, boardSize);
     const { PL, PT, GW, GH, CW, CH, R } = L;
     pulseRef.current += 0.045;
     const pulse = Math.sin(pulseRef.current);
     const s = getSkin(skin);
 
-    // background
     ctx.fillStyle = s.bgColor; ctx.fillRect(0, 0, W, H);
     const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W * 0.65);
     gr.addColorStop(0, "rgba(30,60,140,0.07)"); gr.addColorStop(1, "transparent");
     ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
 
-    // coordinates
-    const fs = Math.max(8, Math.min(CW * 0.36, 13));
+    // Coord labels — scale with cell size
+    const fs = Math.max(7, Math.min(CW * 0.38, 15));
     ctx.font = `600 ${fs}px 'Orbitron','Share Tech Mono',monospace`;
     ctx.fillStyle = s.coordColor;
     ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    for (let c = 0; c < BOARD_SIZE; c++)
-      ctx.fillText(COORD_LETTERS[c], PL + c * CW + CW / 2, PT - 2);
+    for (let c = 0; c < boardSize; c++)
+      ctx.fillText(ALPHA[c] ?? String(c+1), PL + c * CW + CW / 2, PT - 2);
     ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (let r = 0; r < BOARD_SIZE; r++)
+    for (let r = 0; r < boardSize; r++)
       ctx.fillText(String(r + 1), PL - 3, PT + r * CH + CH / 2);
 
-    // grid
-    ctx.strokeStyle = s.gridLine; ctx.lineWidth = 0.65;
-    for (let i = 0; i <= BOARD_SIZE; i++) {
+    // Grid
+    ctx.strokeStyle = s.gridLine; ctx.lineWidth = 0.7;
+    for (let i = 0; i <= boardSize; i++) {
       const x = PL + i * CW, y = PT + i * CH;
       ctx.beginPath(); ctx.moveTo(x, PT);  ctx.lineTo(x, PT + GH); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(PL, y);  ctx.lineTo(PL + GW, y); ctx.stroke();
     }
-    ctx.strokeStyle = s.gridBorder; ctx.lineWidth = 1.5;
+    ctx.strokeStyle = s.gridBorder; ctx.lineWidth = 1.6;
     ctx.strokeRect(PL, PT, GW, GH);
 
-    // win line
+    // Win line
     if (winLine && winLine.length >= 2) {
       const { cx: x0, cy: y0 } = cellCenter(winLine[0][0], winLine[0][1], L);
       const { cx: x1, cy: y1 } = cellCenter(winLine[winLine.length-1][0], winLine[winLine.length-1][1], L);
       const gA = 0.55 + Math.abs(pulse) * 0.45;
       ctx.save();
       ctx.shadowColor = "#fff"; ctx.shadowBlur = 18 + Math.abs(pulse) * 14;
-      ctx.strokeStyle = `rgba(255,255,255,${gA})`; ctx.lineWidth = Math.max(CW * 0.2, 3.5);
+      ctx.strokeStyle = `rgba(255,255,255,${gA})`; ctx.lineWidth = Math.max(CW * 0.22, 4);
       ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
       ctx.restore();
     }
 
-    // placed pieces
-    for (let r = 0; r < BOARD_SIZE; r++) {
-      for (let c = 0; c < BOARD_SIZE; c++) {
+    // Pieces
+    for (let r = 0; r < boardSize; r++)
+      for (let c = 0; c < boardSize; c++) {
         const cell = board[r]?.[c];
         if (!cell) continue;
         const { cx, cy } = cellCenter(r, c, L);
         drawPiece(ctx, cx, cy, R, cell as 1 | 2, s, skin);
       }
-    }
 
     // AI hint
     if (aiHint && status === "playing") {
@@ -213,7 +218,7 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
       ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 22 + gA * 16;
       ctx.strokeStyle = `rgba(255,230,0,${0.6 + gA * 0.4})`; ctx.lineWidth = 2;
       ctx.setLineDash([5, 4]);
-      ctx.beginPath(); ctx.arc(cx, cy, R * 0.76, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.78, 0, Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]);
       ctx.fillStyle = `rgba(255,240,0,${0.4 + gA * 0.45})`;
       ctx.beginPath(); ctx.arc(cx, cy, R * 0.18, 0, Math.PI * 2); ctx.fill();
@@ -221,45 +226,40 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
         const a = Math.PI / 4 + Math.PI / 2 * i;
         ctx.strokeStyle = `rgba(255,240,0,${0.45 + gA * 0.4})`; ctx.lineWidth = 1.5;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * R * 0.86, cy + Math.sin(a) * R * 0.86);
-        ctx.lineTo(cx + Math.cos(a) * R * 1.16, cy + Math.sin(a) * R * 1.16);
+        ctx.moveTo(cx + Math.cos(a) * R * 0.88, cy + Math.sin(a) * R * 0.88);
+        ctx.lineTo(cx + Math.cos(a) * R * 1.2,  cy + Math.sin(a) * R * 1.2);
         ctx.stroke();
       }
       ctx.restore();
     }
 
     const canAct = status === "playing" && currentTurn === myPiece;
-
-    // pending cell (confirmed-pending, waiting for second click)
     const pending = pendingRef.current;
+
+    // Pending (first-click) cell
     if (pending && canAct && board[pending[0]]?.[pending[1]] === 0) {
       const { cx, cy } = cellCenter(pending[0], pending[1], L);
-      // draw piece at ~65% opacity
       drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.65);
-      // confirmation ring
       const ringA = 0.55 + Math.abs(pulse) * 0.45;
       ctx.save();
-      ctx.shadowColor = myPiece === 1 ? s.xGlow : s.oGlow;
-      ctx.shadowBlur = 14;
+      ctx.shadowColor = myPiece === 1 ? s.xGlow : s.oGlow; ctx.shadowBlur = 14;
       ctx.strokeStyle = myPiece === 1
         ? `rgba(255,100,100,${ringA})` : `rgba(80,160,255,${ringA})`;
-      ctx.lineWidth = 1.8;
-      ctx.setLineDash([4, 3]);
-      ctx.beginPath(); ctx.arc(cx, cy, R * 0.9, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 1.8; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.arc(cx, cy, R * 0.92, 0, Math.PI * 2); ctx.stroke();
       ctx.setLineDash([]);
-      // "tap to confirm" tick marks at corners
       for (let i = 0; i < 4; i++) {
         const a = Math.PI / 4 + Math.PI / 2 * i;
         ctx.lineWidth = 2; ctx.strokeStyle = `rgba(255,255,255,${0.45 + ringA * 0.35})`;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a) * R * 0.94, cy + Math.sin(a) * R * 0.94);
-        ctx.lineTo(cx + Math.cos(a) * R * 1.18, cy + Math.sin(a) * R * 1.18);
+        ctx.moveTo(cx + Math.cos(a) * R * 0.96, cy + Math.sin(a) * R * 0.96);
+        ctx.lineTo(cx + Math.cos(a) * R * 1.20, cy + Math.sin(a) * R * 1.20);
         ctx.stroke();
       }
       ctx.restore();
     }
 
-    // hover ghost (25% opacity, only when no pending or hovering different cell)
+    // Hover ghost
     const hover = hoverRef.current;
     if (hover && canAct && board[hover[0]]?.[hover[1]] === 0) {
       const isPending = pending && pending[0] === hover[0] && pending[1] === hover[1];
@@ -269,7 +269,7 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
       }
     }
 
-    // danmaku
+    // Danmaku
     danmakuMessages.forEach(msg => {
       if (!danmakuXRef.current.has(msg.id))
         danmakuXRef.current.set(msg.id, W + 60);
@@ -291,21 +291,23 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
     });
 
     rafRef.current = requestAnimationFrame(draw);
-  }, [board, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages]);
+  }, [board, boardSize, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(rafRef.current);
   }, [draw]);
 
-  // resize
   useEffect(() => {
     function resize() {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const container = canvas.parentElement;
       if (!container) return;
-      const size = Math.floor(Math.min(container.clientWidth, container.clientHeight) * 0.98);
+      // Use full available area — board fills container
+      const w = container.clientWidth;
+      const h = container.clientHeight;
+      const size = Math.floor(Math.min(w, h) * 1.0);
       if (canvas.width !== size || canvas.height !== size) {
         canvas.width = size; canvas.height = size;
       }
@@ -318,7 +320,6 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
     return () => { ro.disconnect(); window.removeEventListener("resize", resize); };
   }, []);
 
-  // ─── input helpers ───────────────────────────────────────────────────────────
   function getCell(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
@@ -332,9 +333,7 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
     } else {
       clientX = e.clientX; clientY = e.clientY;
     }
-    const mx = (clientX - rect.left) * scaleX;
-    const my = (clientY - rect.top)  * scaleY;
-    return hitCell(mx, my, canvas.width, canvas.height);
+    return hitCell((clientX - rect.left) * scaleX, (clientY - rect.top) * scaleY, canvas.width, canvas.height, boardSize);
   }
 
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -343,14 +342,10 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
     if (!cell) return;
     const [r, c] = cell;
     if (board[r]?.[c] !== 0) return;
-
     const pending = pendingRef.current;
     if (pending && pending[0] === r && pending[1] === c) {
-      // second click on same cell → confirm
-      pendingRef.current = null;
-      onMove(r, c);
+      pendingRef.current = null; onMove(r, c);
     } else {
-      // first click or different cell → set pending
       pendingRef.current = [r, c];
     }
   }
@@ -358,36 +353,31 @@ export default function GameCanvas({ board, onMove, myPiece, currentTurn,
   function handleTouchEnd(e: React.TouchEvent<HTMLCanvasElement>) {
     e.preventDefault();
     if (status !== "playing" || currentTurn !== myPiece) return;
-    // use changedTouches for touch end
     const canvas = canvasRef.current;
     if (!canvas || e.changedTouches.length === 0) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
     const t = e.changedTouches[0];
-    const mx = (t.clientX - rect.left) * scaleX;
-    const my = (t.clientY - rect.top)  * scaleY;
-    const cell = hitCell(mx, my, canvas.width, canvas.height);
+    const cell = hitCell(
+      (t.clientX - rect.left) * scaleX,
+      (t.clientY - rect.top)  * scaleY,
+      canvas.width, canvas.height, boardSize
+    );
     if (!cell) return;
     const [r, c] = cell;
     if (board[r]?.[c] !== 0) return;
-
     const pending = pendingRef.current;
     if (pending && pending[0] === r && pending[1] === c) {
-      pendingRef.current = null;
-      onMove(r, c);
+      pendingRef.current = null; onMove(r, c);
     } else {
       pendingRef.current = [r, c];
     }
   }
 
-  function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
-    hoverRef.current = getCell(e);
-  }
-
+  function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) { hoverRef.current = getCell(e); }
   function handleMouseLeave() { hoverRef.current = null; }
 
-  // clear pending when turn changes
   useEffect(() => { pendingRef.current = null; }, [currentTurn, status]);
 
   return (
