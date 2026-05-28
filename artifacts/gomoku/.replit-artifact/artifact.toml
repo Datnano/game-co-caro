@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Cờ Caro Online"
+version = "1.0.0"
+id = "artifacts/gomoku"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23990
+
+[services.development]
+run = "pnpm --filter @workspace/gomoku run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/gomoku", "run", "build" ]
+publicDir = "artifacts/gomoku/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23990"
+BASE_PATH = "/"
