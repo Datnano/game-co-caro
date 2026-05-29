@@ -65,7 +65,7 @@ function getSkin(skin: string): SkinConfig {
 
 // Board background presets
 const BG_PRESETS: Record<string, string> = {
-  default:    "",           // use skin default
+  default:    "",
   navy:       "#04071a",
   midnight:   "#020510",
   pitch:      "#010108",
@@ -73,14 +73,14 @@ const BG_PRESETS: Record<string, string> = {
   darkmaroon: "#0a0204",
 };
 
-// Border color presets
-const BORDER_PRESETS: Record<string, string> = {
-  default: "",   // use skin default
-  white:   "rgba(220,230,255,0.55)",
-  gold:    "rgba(255,210,0,0.60)",
-  teal:    "rgba(0,212,192,0.58)",
-  purple:  "rgba(160,80,255,0.58)",
-  red:     "rgba(255,60,60,0.55)",
+// Border color presets — { border, gridLine } pair so grid matches border
+const BORDER_PRESETS: Record<string, { border: string; gridLine: string }> = {
+  default: { border: "",                        gridLine: "" },
+  white:   { border: "rgba(220,230,255,0.55)",  gridLine: "rgba(220,230,255,0.18)" },
+  gold:    { border: "rgba(255,210,0,0.62)",    gridLine: "rgba(255,210,0,0.18)"   },
+  teal:    { border: "rgba(0,212,192,0.60)",    gridLine: "rgba(0,212,192,0.18)"   },
+  purple:  { border: "rgba(160,80,255,0.60)",   gridLine: "rgba(160,80,255,0.18)"  },
+  red:     { border: "rgba(255,60,60,0.58)",    gridLine: "rgba(255,60,60,0.18)"   },
 };
 
 // ── Perfect square layout — cells always square, grid centered ───────────────
@@ -238,8 +238,10 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     const s = getSkin(skin);
 
     // Effective background + border (custom overrides skin default)
-    const effectiveBg     = (boardBg && BG_PRESETS[boardBg])     || s.bgColor;
-    const effectiveBorder = (boardBorder && BORDER_PRESETS[boardBorder]) || s.gridBorder;
+    const effectiveBg       = (boardBg && BG_PRESETS[boardBg])           || s.bgColor;
+    const borderPreset      = boardBorder ? BORDER_PRESETS[boardBorder]  : null;
+    const effectiveBorder   = (borderPreset?.border)   || s.gridBorder;
+    const effectiveGridLine = (borderPreset?.gridLine)  || s.gridLine;
 
     // Background
     ctx.fillStyle = effectiveBg; ctx.fillRect(0, 0, W, H);
@@ -275,8 +277,8 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
       ctx.fillText(String(r + 1), rowLabelX, PT + r * CH + CH / 2);
     }
 
-    // Grid interior lines
-    ctx.strokeStyle = s.gridLine; ctx.lineWidth = 0.7;
+    // Grid interior lines (follow effectiveGridLine so color matches border)
+    ctx.strokeStyle = effectiveGridLine; ctx.lineWidth = 0.7;
     for (let i = 0; i <= boardSize; i++) {
       const x = PL + i * CW;
       const y = PT + i * CH;
