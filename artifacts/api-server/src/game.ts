@@ -40,6 +40,7 @@ function getWinCount(boardSize: number) {
   if (boardSize <= 4) return 4;
   return 5;
 }
+function clampTime(t: number) { return Math.min(Math.max(t, 10), 300); }
 
 export function createRoom(turnTime = 30, boardSize = DEFAULT_BOARD_SIZE): GameRoom {
   let id = randomCode();
@@ -55,8 +56,6 @@ export function createRoom(turnTime = 30, boardSize = DEFAULT_BOARD_SIZE): GameR
   rooms.set(id, room);
   return room;
 }
-
-function clampTime(t: number) { return Math.min(Math.max(t, 10), 300); }
 
 export function getRoom(id: string) { return rooms.get(id); }
 
@@ -108,13 +107,9 @@ export function resetGame(roomId: string, firstPiece?: 1 | 2): GameRoom | null {
   if (!room || room.players.length < 2) return null;
   room.board = makeBoard(room.boardSize); room.winner = 0; room.winLine = null;
   room.moveCount = 0; room.status = "playing";
-  if (firstPiece) {
-    room.currentTurn = firstPiece;
-  } else if (room.lastLoser !== 0) {
-    room.currentTurn = room.lastLoser as 1 | 2;
-  } else {
-    room.currentTurn = 1;
-  }
+  if (firstPiece) room.currentTurn = firstPiece;
+  else if (room.lastLoser !== 0) room.currentTurn = room.lastLoser as 1 | 2;
+  else room.currentTurn = 1;
   return room;
 }
 
@@ -156,57 +151,47 @@ export function checkWin(
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  STRONG AI — threat-based evaluation
+//  ADVANCED AI — minimax + fork/trap detection + boundary awareness
 // ══════════════════════════════════════════════════════════════════
 
 const SCORE = {
-  WIN5:  100_000, LIVE4: 10_000, DEAD4: 2_000,
-  LIVE3:  1_000,  DEAD3:   150,  LIVE2:    50,
-  DEAD2:     10,  LIVE1:     3,
+  WIN:    1_000_000,
+  LIVE4:     50_000,
+  DEAD4:      8_000,
+  LIVE3:      5_000,
+  DEAD3:        800,
+  LIVE2:        200,
+  DEAD2:         30,
+  LIVE1:          5,
 };
 
-export function getAIMove(board: CellValue[][], myPiece: 1 | 2, boardSize: number, winCount: number): [number, number] {
-  const opp: CellValue = myPiece === 1 ? 2 : 1;
-  const candidates = getCandidates(board, boardSize);
-  if (candidates.length === 0) return [Math.floor(boardSize/2), Math.floor(boardSize/2)];
+const DIRS = [[0,1],[1,0],[1,1],[1,-1]] as const;
 
-  for (const [r, c] of candidates) {
-    board[r][c] = myPiece;
-    if (checkWin(board, r, c, myPiece, boardSize, winCount)) { board[r][c] = 0; return [r, c]; }
-    board[r][c] = 0;
-  }
-  for (const [r, c] of candidates) {
-    board[r][c] = opp;
-    if (checkWin(board, r, c, opp, boardSize, winCount)) { board[r][c] = 0; return [r, c]; }
-    board[r][c] = 0;
-  }
-
-  let best: [number, number] = candidates[0];
-  let bestScore = -Infinity;
-  for (const [r, c] of candidates) {
-    board[r][c] = myPiece;
-    const atk = evalPosition(board, r, c, myPiece, boardSize, winCount);
-    board[r][c] = 0;
-    board[r][c] = opp;
-    const def = evalPosition(board, r, c, opp, boardSize, winCount);
-    board[r][c] = 0;
-    board[r][c] = myPiece;
-    const global = scoreBoard(board, myPiece, opp, boardSize, winCount);
-    board[r][c] = 0;
-    const score = global + atk * 1.1 + def * 0.95;
-    if (score > bestScore) { bestScore = score; best = [r, c]; }
-  }
-  return best;
-}
-
-function evalPosition(board: CellValue[][], row: number, col: number,
+// How many potential winning windows pass through (r,c) for piece — boundary awareness
+function winPathCount(board: CellValue[][], r: number, c: number,
                       piece: CellValue, boardSize: number, winCount: number): number {
-  let score = 0;
-  for (const [dr, dc] of [[0,1],[1,0],[1,1],[1,-1]])
-    score += evalLineAt(board, row, col, dr, dc, piece, boardSize, winCount);
-  return score;
+  let count = 0;
+  for (const [dr, dc] of DIRS) {
+    for (let offset = 0; offset < winCount; offset++) {
+      let ok = true;
+      for (let i = 0; i < winCount; i++) {
+        const nr = r + dr*(i-offset), nc = c + dc*(i-offset);
+        if (nr < 0 || nr >= boardSize || nc < 0 || nc >= boardSize) { ok = false; break; }
+        if (board[nr][nc] !== 0 && board[nr][nc] !== piece) { ok = false; break; }
+      }
+      if (ok) count++;
+    }
+  }
+  return count;
 }
 
+// Boundary / centrality bonus — being near edge limits future paths
+function centerScore(r: number, c: number, boardSize: number): number {
+  const dist = Math.min(r, boardSize-1-r, c, boardSize-1-c);
+  return Math.min(dist, Math.floor(boardSize/4)) * 3;
+}
+
+// Evaluate a line through (row,col) in direction (dr,dc) for piece
 function evalLineAt(board: CellValue[][], row: number, col: number,
                     dr: number, dc: number, piece: CellValue,
                     boardSize: number, winCount: number): number {
@@ -224,45 +209,200 @@ function evalLineAt(board: CellValue[][], row: number, col: number,
     else if (board[r][c]===0) { openB=1; break; } else break;
   }
   const opens = openA + openB;
-  if (count >= winCount) return SCORE.WIN5;
-  if (count === winCount-1) return opens>=1 ? SCORE.LIVE4 : SCORE.DEAD4;
-  if (count === winCount-2) return opens===2 ? SCORE.LIVE3 : opens===1 ? SCORE.DEAD3 : 0;
-  if (count === 2) return opens===2 ? SCORE.LIVE2 : opens===1 ? SCORE.DEAD2 : 0;
+  if (count >= winCount)         return SCORE.WIN;
+  if (count === winCount-1)      return opens>=1 ? SCORE.LIVE4 : SCORE.DEAD4;
+  if (count === winCount-2)      return opens===2 ? SCORE.LIVE3 : opens===1 ? SCORE.DEAD3 : 0;
+  if (count === 2)               return opens===2 ? SCORE.LIVE2 : opens===1 ? SCORE.DEAD2 : 0;
   return opens===2 ? SCORE.LIVE1 : 0;
 }
 
-function scoreBoard(board: CellValue[][], me: CellValue, opp: CellValue,
-                    boardSize: number, winCount: number): number {
+// Full positional score for a placed piece at (row,col)
+function evalPosition(board: CellValue[][], row: number, col: number,
+                      piece: CellValue, boardSize: number, winCount: number): number {
   let score = 0;
-  const dirs = [[0,1],[1,0],[1,1],[1,-1]];
-  for (let r = 0; r < boardSize; r++)
-    for (let c = 0; c < boardSize; c++) {
-      if (board[r][c]===0) continue;
-      const isMe = board[r][c]===me;
-      for (const [dr,dc] of dirs) {
-        const s = evalLineAt(board,r,c,dr,dc,board[r][c],boardSize,winCount);
-        score += isMe ? s : -s*1.15;
-      }
-    }
-  const cr = boardSize/2, cc = boardSize/2;
-  for (let r=0;r<boardSize;r++)
-    for (let c=0;c<boardSize;c++)
-      if (board[r][c]===me)
-        score += Math.max(0, 3 - (Math.abs(r-cr)+Math.abs(c-cc))*0.15);
+  for (const [dr, dc] of DIRS)
+    score += evalLineAt(board, row, col, dr, dc, piece, boardSize, winCount);
   return score;
+}
+
+// Count "live threats" (live4 or better) the piece has after placing at (r,c)
+function countLiveThreats(board: CellValue[][], r: number, c: number,
+                           piece: CellValue, boardSize: number, winCount: number): number {
+  board[r][c] = piece;
+  let threats = 0;
+  for (const [dr, dc] of DIRS) {
+    const s = evalLineAt(board, r, c, dr, dc, piece, boardSize, winCount);
+    if (s >= SCORE.LIVE4) threats += 2;  // live four = two directions open = nearly guaranteed win
+    else if (s >= SCORE.DEAD4) threats += 1;
+    else if (s >= SCORE.LIVE3) threats += 0.5;
+  }
+  board[r][c] = 0;
+  return threats;
+}
+
+// Comprehensive board evaluation from myPiece's perspective
+function evaluateBoard(board: CellValue[][], myPiece: CellValue, opp: CellValue,
+                       boardSize: number, winCount: number): number {
+  let score = 0;
+  for (let r = 0; r < boardSize; r++) {
+    for (let c = 0; c < boardSize; c++) {
+      if (board[r][c] === 0) continue;
+      const isMe = board[r][c] === myPiece;
+      for (const [dr, dc] of DIRS) {
+        const s = evalLineAt(board, r, c, dr, dc, board[r][c], boardSize, winCount);
+        score += isMe ? s : -s * 1.2;
+      }
+      if (isMe) score += centerScore(r, c, boardSize);
+      else score -= centerScore(r, c, boardSize) * 0.8;
+    }
+  }
+  return score;
+}
+
+// Minimax with alpha-beta (depth limited)
+function minimax(
+  board: CellValue[][], depth: number, alpha: number, beta: number,
+  isMax: boolean, myPiece: CellValue, opp: CellValue,
+  boardSize: number, winCount: number, lastMove: [number,number] | null
+): number {
+  // Terminal check at last move
+  if (lastMove) {
+    const [lr, lc] = lastMove;
+    const lastPiece = board[lr][lc];
+    if (lastPiece !== 0 && checkWin(board, lr, lc, lastPiece, boardSize, winCount)) {
+      return lastPiece === myPiece ? SCORE.WIN * 10 + depth : -SCORE.WIN * 10 - depth;
+    }
+  }
+  if (depth === 0) return evaluateBoard(board, myPiece, opp, boardSize, winCount);
+
+  const candidates = getCandidates(board, boardSize).slice(0, 12); // prune to top 12
+  if (candidates.length === 0) return 0;
+
+  if (isMax) {
+    let best = -Infinity;
+    for (const [r, c] of candidates) {
+      board[r][c] = myPiece;
+      const val = minimax(board, depth-1, alpha, beta, false, myPiece, opp, boardSize, winCount, [r,c]);
+      board[r][c] = 0;
+      best = Math.max(best, val);
+      alpha = Math.max(alpha, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  } else {
+    let best = Infinity;
+    for (const [r, c] of candidates) {
+      board[r][c] = opp;
+      const val = minimax(board, depth-1, alpha, beta, true, myPiece, opp, boardSize, winCount, [r,c]);
+      board[r][c] = 0;
+      best = Math.min(best, val);
+      beta = Math.min(beta, best);
+      if (beta <= alpha) break;
+    }
+    return best;
+  }
+}
+
+export function getAIMove(board: CellValue[][], myPiece: 1 | 2,
+                          boardSize: number, winCount: number): [number, number] {
+  const opp: CellValue = myPiece === 1 ? 2 : 1;
+  const candidates = getCandidates(board, boardSize);
+  if (candidates.length === 0) return [Math.floor(boardSize/2), Math.floor(boardSize/2)];
+
+  // ── STEP 1: Immediate win ──────────────────────────────────────────────────
+  for (const [r, c] of candidates) {
+    board[r][c] = myPiece;
+    if (checkWin(board, r, c, myPiece, boardSize, winCount)) { board[r][c] = 0; return [r, c]; }
+    board[r][c] = 0;
+  }
+
+  // ── STEP 2: Block opponent immediate win ───────────────────────────────────
+  for (const [r, c] of candidates) {
+    board[r][c] = opp;
+    if (checkWin(board, r, c, opp, boardSize, winCount)) { board[r][c] = 0; return [r, c]; }
+    board[r][c] = 0;
+  }
+
+  // ── STEP 3: Fork creation (double threat trap) ─────────────────────────────
+  // Find cells where AI can create 2+ simultaneous threats (fork = unblockable)
+  let bestFork: [number, number] | null = null;
+  let bestForkVal = 1.5; // threshold for a real fork
+  for (const [r, c] of candidates) {
+    const myThreats = countLiveThreats(board, r, c, myPiece, boardSize, winCount);
+    if (myThreats > bestForkVal) { bestForkVal = myThreats; bestFork = [r, c]; }
+  }
+  if (bestFork) return bestFork;
+
+  // ── STEP 4: Block opponent fork ────────────────────────────────────────────
+  let bestOppFork: [number, number] | null = null;
+  let bestOppForkVal = 1.5;
+  for (const [r, c] of candidates) {
+    const oppThreats = countLiveThreats(board, r, c, opp, boardSize, winCount);
+    if (oppThreats > bestOppForkVal) { bestOppForkVal = oppThreats; bestOppFork = [r, c]; }
+  }
+  if (bestOppFork) return bestOppFork;
+
+  // ── STEP 5: Minimax search (depth 2) with comprehensive scoring ────────────
+  const topCandidates = scoredCandidates(board, candidates, myPiece, opp, boardSize, winCount)
+    .slice(0, 16); // top 16 for minimax
+
+  let best: [number, number] = topCandidates[0]?.[0] ?? candidates[0];
+  let bestScore = -Infinity;
+
+  for (const [[r, c]] of topCandidates) {
+    board[r][c] = myPiece;
+    const mmScore = minimax(board, 2, -Infinity, Infinity, false, myPiece, opp, boardSize, winCount, [r,c]);
+    board[r][c] = 0;
+
+    // Additional local scoring
+    const atk     = evalPosition(board, r, c, myPiece, boardSize, winCount);
+    board[r][c] = opp;
+    const def     = evalPosition(board, r, c, opp, boardSize, winCount);
+    board[r][c] = 0;
+    const paths   = winPathCount(board, r, c, myPiece, boardSize, winCount);
+    const center  = centerScore(r, c, boardSize);
+
+    const total = mmScore * 1.5 + atk * 1.2 + def * 1.0 + paths * 12 + center;
+    if (total > bestScore) { bestScore = total; best = [r, c]; }
+  }
+
+  return best;
+}
+
+// Pre-score candidates to pick top ones for minimax
+function scoredCandidates(
+  board: CellValue[][], candidates: [number,number][],
+  myPiece: CellValue, opp: CellValue, boardSize: number, winCount: number
+): [[number,number], number][] {
+  return candidates.map(([r,c]): [[number,number], number] => {
+    board[r][c] = myPiece;
+    const atk  = evalPosition(board, r, c, myPiece, boardSize, winCount);
+    board[r][c] = 0;
+    board[r][c] = opp;
+    const def  = evalPosition(board, r, c, opp, boardSize, winCount);
+    board[r][c] = 0;
+    const paths = winPathCount(board, r, c, myPiece, boardSize, winCount);
+    const center = centerScore(r, c, boardSize);
+    return [[r,c], atk * 1.2 + def + paths * 10 + center];
+  }).sort((a, b) => b[1] - a[1]);
 }
 
 function getCandidates(board: CellValue[][], boardSize: number): [number, number][] {
   const candidates: [number, number][] = [];
   const visited = new Set<string>();
   let hasAny = false;
-  for (let r=0;r<boardSize;r++) for (let c=0;c<boardSize;c++) {
-    if (board[r][c]===0) continue;
-    hasAny = true;
-    for (let dr=-2;dr<=2;dr++) for (let dc=-2;dc<=2;dc++) {
-      const nr=r+dr, nc=c+dc, key=`${nr},${nc}`;
-      if (nr>=0&&nr<boardSize&&nc>=0&&nc<boardSize&&board[nr][nc]===0&&!visited.has(key)) {
-        visited.add(key); candidates.push([nr,nc]);
+  const range = boardSize <= 5 ? 1 : 2; // smaller boards: 1-cell radius
+  for (let r = 0; r < boardSize; r++) {
+    for (let c = 0; c < boardSize; c++) {
+      if (board[r][c] === 0) continue;
+      hasAny = true;
+      for (let dr = -range; dr <= range; dr++) {
+        for (let dc = -range; dc <= range; dc++) {
+          const nr = r+dr, nc = c+dc, key = `${nr},${nc}`;
+          if (nr>=0&&nr<boardSize&&nc>=0&&nc<boardSize&&board[nr][nc]===0&&!visited.has(key)) {
+            visited.add(key); candidates.push([nr,nc]);
+          }
+        }
       }
     }
   }

@@ -373,6 +373,7 @@ body { background: var(--bg-deep); color: var(--text-hi); font-family: var(--fon
 .order-sub  { font-size: .58rem; color: var(--text-dim); letter-spacing: .05em; }
 
 .modal-skin-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+.modal-skin-grid-6 { grid-template-columns: repeat(3, 1fr); }
 .modal-skin-btn {
   display: flex; flex-direction: column; align-items: center; gap: 3px;
   background: rgba(10,22,58,.7); border: 1px solid var(--border);

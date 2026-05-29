@@ -11,6 +11,10 @@ const SKINS = [
     preview: <><span style={{color:"#ffd700",textShadow:"0 0 8px #ffd700"}}>✕</span><span style={{color:"#ff8c00",textShadow:"0 0 8px #ff8c00"}}> ○</span></> },
   { id: "silver",    label: "VIP Silver",
     preview: <><span style={{color:"#e8e8e8",textShadow:"0 0 8px #c0c0c0"}}>✕</span><span style={{color:"#b0b8c8",textShadow:"0 0 8px #9098a8"}}> ○</span></> },
+  { id: "fire",      label: "🔥 Lửa",
+    preview: <><span style={{color:"#ff5500",textShadow:"0 0 10px #ff3300,0 0 20px #ff6600"}}>✕</span><span style={{color:"#ff8800",textShadow:"0 0 10px #ff4400,0 0 20px #ffcc00"}}> ○</span></> },
+  { id: "water",     label: "💧 Nước",
+    preview: <><span style={{color:"#00aaff",textShadow:"0 0 10px #003388,0 0 20px #00ccff"}}>✕</span><span style={{color:"#0055ff",textShadow:"0 0 10px #001166,0 0 20px #66ccff"}}> ○</span></> },
 ];
 
 const TIME_OPTIONS = [

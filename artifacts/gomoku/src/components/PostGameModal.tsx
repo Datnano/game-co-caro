@@ -1,17 +1,21 @@
 import { useState } from "react";
 
 const SKINS = [
-  { id: "classic",   label: "Classic Glow",  preview: <>✕ ○</> },
-  { id: "cyberpunk", label: "Cyberpunk",      preview: <>⬡ ◈</> },
-  { id: "gold",      label: "VIP Gold",       preview: <>✕ ○</> },
-  { id: "silver",    label: "VIP Silver",     preview: <>✕ ○</> },
+  { id: "classic",   label: "Classic Glow"  },
+  { id: "cyberpunk", label: "Cyberpunk"     },
+  { id: "gold",      label: "VIP Gold"      },
+  { id: "silver",    label: "VIP Silver"    },
+  { id: "fire",      label: "🔥 Lửa"        },
+  { id: "water",     label: "💧 Nước"       },
 ];
 
-const SKIN_COLORS: Record<string, { x: string; o: string }> = {
+const SKIN_COLORS: Record<string, { x: string; o: string; gx?: string; go?: string }> = {
   classic:  { x: "#ff3333", o: "#3399ff" },
   cyberpunk:{ x: "#ff00ff", o: "#00ffff" },
   gold:     { x: "#ffd700", o: "#ff8c00" },
   silver:   { x: "#e0e0e0", o: "#b0b8c8" },
+  fire:     { x: "#ff5500", o: "#ff8800", gx: "#ff3300", go: "#ffcc00" },
+  water:    { x: "#00aaff", o: "#0055ff", gx: "#003388", go: "#66ccff" },
 };
 
 interface Props {
@@ -80,9 +84,11 @@ export default function PostGameModal({ winner, myPiece, myName, currentSkin, is
         {/* Skin selector */}
         <div className="modal-section">
           <div className="modal-section-title">Chọn Skin</div>
-          <div className="modal-skin-grid">
+          <div className="modal-skin-grid modal-skin-grid-6">
             {SKINS.map(s => {
               const c = SKIN_COLORS[s.id];
+              const glowX = c.gx ?? c.x;
+              const glowO = c.go ?? c.o;
               return (
                 <button
                   key={s.id}
@@ -90,8 +96,8 @@ export default function PostGameModal({ winner, myPiece, myName, currentSkin, is
                   onClick={() => setSelectedSkin(s.id)}
                 >
                   <span className="modal-skin-preview">
-                    <span style={{ color: c.x, textShadow: `0 0 8px ${c.x}` }}>✕</span>
-                    <span style={{ color: c.o, textShadow: `0 0 8px ${c.o}` }}> ○</span>
+                    <span style={{ color: c.x, textShadow: `0 0 8px ${glowX}, 0 0 16px ${glowX}` }}>✕</span>
+                    <span style={{ color: c.o, textShadow: `0 0 8px ${glowO}, 0 0 16px ${glowO}` }}> ○</span>
                   </span>
                   <span className="modal-skin-name">{s.label}</span>
                 </button>
