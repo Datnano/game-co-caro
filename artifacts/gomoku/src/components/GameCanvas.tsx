@@ -17,6 +17,8 @@ interface Props {
   skin: string;
   aiHint: [number, number] | null;
   danmakuMessages: DanmakuMsg[];
+  boardBg?: string;
+  boardBorder?: string;
 }
 
 interface SkinConfig {
@@ -52,7 +54,7 @@ function getSkin(skin: string): SkinConfig {
       gridLine:"rgba(140,80,220,0.20)", gridBorder:"rgba(140,80,220,0.48)",
       bgColor:"#060410", coordColor:"rgba(180,130,240,0.65)",
     };
-    default: return { // classic
+    default: return {
       xColor:"#ff3333", xGlow:"#990000",
       oColor:"#3399ff", oGlow:"#004499",
       gridLine:"rgba(70,120,210,0.24)", gridBorder:"rgba(70,120,210,0.56)",
@@ -61,16 +63,48 @@ function getSkin(skin: string): SkinConfig {
   }
 }
 
+// Board background presets
+const BG_PRESETS: Record<string, string> = {
+  default:    "",           // use skin default
+  navy:       "#04071a",
+  midnight:   "#020510",
+  pitch:      "#010108",
+  darkgreen:  "#020a06",
+  darkmaroon: "#0a0204",
+};
+
+// Border color presets
+const BORDER_PRESETS: Record<string, string> = {
+  default: "",   // use skin default
+  white:   "rgba(220,230,255,0.55)",
+  gold:    "rgba(255,210,0,0.60)",
+  teal:    "rgba(0,212,192,0.58)",
+  purple:  "rgba(160,80,255,0.58)",
+  red:     "rgba(255,60,60,0.55)",
+};
+
+// ── Perfect square layout — cells always square, grid centered ───────────────
 function getLayout(W: number, H: number, boardSize: number) {
-  const coordScale = Math.max(0.032, Math.min(0.056, 1.1 / boardSize));
-  const PL = W * coordScale * 1.6;
-  const PT = W * coordScale * 1.3;
-  const GW = W - PL - W * 0.012;
-  const GH = H - PT - W * 0.010;
-  const CW = GW / boardSize;
-  const CH = GH / boardSize;
-  const R  = Math.min(CW, CH) * 0.44;
-  return { PL, PT, GW, GH, CW, CH, R };
+  // Font size for coordinate labels
+  const fontSize = Math.max(8, Math.min(Math.floor(W * 0.038), 14));
+  // Coord label area — left column (row numbers) and top row (col letters)
+  const coordPx = Math.ceil(fontSize * 2.8);
+
+  // Available space after coord labels
+  const availW = W - coordPx;
+  const availH = H - coordPx;
+
+  // Uniform square cell size
+  const cellSize = Math.min(availW, availH) / boardSize;
+  const GW = cellSize * boardSize;
+  const GH = cellSize * boardSize; // always equal
+
+  // Center the grid in available space
+  const PL = coordPx + (availW - GW) / 2;
+  const PT = coordPx + (availH - GH) / 2;
+
+  const R = cellSize * 0.44;
+  return { PL, PT, GW, GH, CW: cellSize, CH: cellSize, R, fontSize };
 }
 
 function cellCenter(row: number, col: number, L: ReturnType<typeof getLayout>) {
@@ -97,7 +131,7 @@ function drawElement(ctx: CanvasRenderingContext2D, cx: number, cy: number,
   ctx.textBaseline = "middle";
   ctx.shadowColor = piece === 1 ? "#ff4400" : "#0044cc";
   ctx.shadowBlur = R * 0.7;
-  ctx.fillText(emoji, cx, cy + sz * 0.04); // slight vertical offset for emoji
+  ctx.fillText(emoji, cx, cy + sz * 0.04);
   ctx.restore();
 }
 
@@ -106,7 +140,6 @@ function drawCyberpunkX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
                          R: number, s: SkinConfig, alpha = 1) {
   ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
   const off = R * 0.48;
-  // hexagon outline
   ctx.shadowColor = s.xGlow; ctx.shadowBlur = 14;
   ctx.strokeStyle = s.xColor; ctx.lineWidth = Math.max(1.5, R * 0.11);
   ctx.beginPath();
@@ -116,7 +149,6 @@ function drawCyberpunkX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.closePath(); ctx.stroke();
-  // inner X
   ctx.lineWidth = Math.max(2, R * 0.15);
   ctx.beginPath(); ctx.moveTo(cx - off * 0.5, cy - off * 0.5); ctx.lineTo(cx + off * 0.5, cy + off * 0.5); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx + off * 0.5, cy - off * 0.5); ctx.lineTo(cx - off * 0.5, cy + off * 0.5); ctx.stroke();
@@ -126,7 +158,6 @@ function drawCyberpunkX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
 function drawCyberpunkO(ctx: CanvasRenderingContext2D, cx: number, cy: number,
                          R: number, s: SkinConfig, alpha = 1) {
   ctx.save(); ctx.globalAlpha = alpha;
-  // octagon
   ctx.shadowColor = s.oGlow; ctx.shadowBlur = 14;
   ctx.strokeStyle = s.oColor; ctx.lineWidth = Math.max(1.5, R * 0.11);
   ctx.beginPath();
@@ -136,24 +167,21 @@ function drawCyberpunkO(ctx: CanvasRenderingContext2D, cx: number, cy: number,
     i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
   ctx.closePath(); ctx.stroke();
-  // center dot
   ctx.fillStyle = s.oColor; ctx.shadowBlur = 8;
   ctx.beginPath(); ctx.arc(cx, cy, R * 0.13, 0, Math.PI * 2); ctx.fill();
   ctx.restore();
 }
 
-// ── standard X and O (classic / gold / silver) ───────────────────────────────
-// Both use the SAME size parameters so they are visually equal
+// ── standard X and O ─────────────────────────────────────────────────────────
 function drawStandardX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
                         R: number, s: SkinConfig, alpha = 1) {
   ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
-  const off = R * 0.52;           // extent from center
-  const lw  = R * 0.28;           // stroke width (same as O)
+  const off = R * 0.52;
+  const lw  = R * 0.28;
   ctx.shadowColor = s.xGlow; ctx.shadowBlur = 22;
   ctx.strokeStyle = s.xColor; ctx.lineWidth = lw;
   ctx.beginPath(); ctx.moveTo(cx - off, cy - off); ctx.lineTo(cx + off, cy + off); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx + off, cy - off); ctx.lineTo(cx - off, cy + off); ctx.stroke();
-  // inner white highlight
   ctx.shadowBlur = 6; ctx.strokeStyle = "rgba(255,255,255,0.42)"; ctx.lineWidth = lw * 0.28;
   ctx.beginPath(); ctx.moveTo(cx - off, cy - off); ctx.lineTo(cx + off, cy + off); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(cx + off, cy - off); ctx.lineTo(cx - off, cy + off); ctx.stroke();
@@ -163,12 +191,11 @@ function drawStandardX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
 function drawStandardO(ctx: CanvasRenderingContext2D, cx: number, cy: number,
                         R: number, s: SkinConfig, alpha = 1) {
   ctx.save(); ctx.globalAlpha = alpha;
-  const radius = R * 0.52;        // same footprint as X off
-  const lw     = R * 0.28;        // same stroke weight as X
+  const radius = R * 0.52;
+  const lw     = R * 0.28;
   ctx.shadowColor = s.oGlow; ctx.shadowBlur = 22;
   ctx.strokeStyle = s.oColor; ctx.lineWidth = lw;
   ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
-  // inner white highlight
   ctx.shadowBlur = 6; ctx.strokeStyle = "rgba(255,255,255,0.42)"; ctx.lineWidth = lw * 0.28;
   ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
@@ -182,7 +209,6 @@ function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: num
     else             drawCyberpunkO(ctx, cx, cy, R, s, alpha);
     return;
   }
-  // classic / gold / silver
   if (piece === 1) drawStandardX(ctx, cx, cy, R, s, alpha);
   else             drawStandardO(ctx, cx, cy, R, s, alpha);
 }
@@ -190,7 +216,7 @@ function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: num
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function GameCanvas({ board, boardSize, onMove, myPiece, currentTurn,
-  winLine, status, skin, aiHint, danmakuMessages }: Props) {
+  winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder }: Props) {
 
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const rafRef      = useRef<number>(0);
@@ -206,15 +232,18 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     if (!ctx) return;
     const W = canvas.width, H = canvas.height;
     const L = getLayout(W, H, boardSize);
-    const { PL, PT, GW, GH, CW, CH, R } = L;
+    const { PL, PT, GW, GH, CW, CH, R, fontSize } = L;
     pulseRef.current += 0.045;
     const pulse = Math.sin(pulseRef.current);
     const s = getSkin(skin);
 
+    // Effective background + border (custom overrides skin default)
+    const effectiveBg     = (boardBg && BG_PRESETS[boardBg])     || s.bgColor;
+    const effectiveBorder = (boardBorder && BORDER_PRESETS[boardBorder]) || s.gridBorder;
+
     // Background
-    ctx.fillStyle = s.bgColor; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = effectiveBg; ctx.fillRect(0, 0, W, H);
     if (skin === "element") {
-      // Split element glow — left=fire, right=water
       const gl = ctx.createRadialGradient(W*0.25, H*0.65, 0, W*0.25, H*0.65, W*0.5);
       gl.addColorStop(0, "rgba(120,30,0,0.14)"); gl.addColorStop(1, "transparent");
       ctx.fillStyle = gl; ctx.fillRect(0, 0, W, H);
@@ -227,26 +256,49 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
       ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
     }
 
-    // Coordinate labels
-    const fs = Math.max(7, Math.min(CW * 0.38, 15));
+    // Coordinate labels — precisely aligned to grid
+    const fs = fontSize;
     ctx.font = `600 ${fs}px 'Orbitron','Share Tech Mono',monospace`;
     ctx.fillStyle = s.coordColor;
-    ctx.textAlign = "center"; ctx.textBaseline = "bottom";
-    for (let c = 0; c < boardSize; c++)
-      ctx.fillText(ALPHA[c] ?? String(c+1), PL + c*CW + CW/2, PT - 2);
-    ctx.textAlign = "right"; ctx.textBaseline = "middle";
-    for (let r = 0; r < boardSize; r++)
-      ctx.fillText(String(r+1), PL - 3, PT + r*CH + CH/2);
 
-    // Grid
+    // Column letters — centered on each cell column, vertically centered in top coord area
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const colLabelY = PT / 2; // vertical center of top coord strip
+    for (let c = 0; c < boardSize; c++) {
+      ctx.fillText(ALPHA[c] ?? String(c + 1), PL + c * CW + CW / 2, colLabelY);
+    }
+
+    // Row numbers — centered on each row, horizontally centered in left coord area
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    const rowLabelX = PL / 2; // horizontal center of left coord strip
+    for (let r = 0; r < boardSize; r++) {
+      ctx.fillText(String(r + 1), rowLabelX, PT + r * CH + CH / 2);
+    }
+
+    // Grid interior lines
     ctx.strokeStyle = s.gridLine; ctx.lineWidth = 0.7;
     for (let i = 0; i <= boardSize; i++) {
-      const x = PL + i*CW, y = PT + i*CH;
-      ctx.beginPath(); ctx.moveTo(x, PT); ctx.lineTo(x, PT+GH); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL+GW, y); ctx.stroke();
+      const x = PL + i * CW;
+      const y = PT + i * CH;
+      ctx.beginPath(); ctx.moveTo(x, PT); ctx.lineTo(x, PT + GH); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(PL, y); ctx.lineTo(PL + GW, y); ctx.stroke();
     }
-    ctx.strokeStyle = s.gridBorder; ctx.lineWidth = 1.6;
+
+    // Outer border frame — exactly matching the grid extent
+    ctx.strokeStyle = effectiveBorder; ctx.lineWidth = 2;
     ctx.strokeRect(PL, PT, GW, GH);
+
+    // Corner accents for the border frame
+    const accentLen = Math.min(CW * 1.5, 18);
+    const accentW = 3;
+    ctx.strokeStyle = effectiveBorder; ctx.lineWidth = accentW;
+    const corners = [
+      [PL, PT, 1, 1], [PL + GW, PT, -1, 1],
+      [PL, PT + GH, 1, -1], [PL + GW, PT + GH, -1, -1],
+    ] as const;
+    for (const [cx2, cy2, dx, dy] of corners) {
+      ctx.beginPath(); ctx.moveTo(cx2 + dx * accentLen, cy2); ctx.lineTo(cx2, cy2); ctx.lineTo(cx2, cy2 + dy * accentLen); ctx.stroke();
+    }
 
     // Win line
     if (winLine && winLine.length >= 2) {
@@ -351,7 +403,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     });
 
     rafRef.current = requestAnimationFrame(draw);
-  }, [board, boardSize, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages]);
+  }, [board, boardSize, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);
@@ -444,3 +496,4 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     />
   );
 }
+

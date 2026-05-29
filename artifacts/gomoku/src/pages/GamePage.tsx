@@ -25,52 +25,48 @@ export interface GameRoom {
 
 const TIME_OPTIONS = [15, 30, 60, 90, 120];
 
-// Map emoji characters to Vietnamese names for TTS
 const EMOJI_NAMES: Record<string, string> = {
-  "😄": "mặt cười",
-  "😂": "mặt khóc vì cười",
-  "🔥": "lửa",
-  "💪": "cơ bắp",
-  "👏": "vỗ tay",
-  "😈": "mặt quỷ",
-  "🤯": "bùng nổ đầu",
-  "💀": "đầu lâu",
-  "🎉": "pháo giấy",
-  "⚡": "sét đánh",
-  "❤️": "trái tim",
-  "👍": "giơ ngón cái",
-  "😎": "mặt ngầu",
-  "😡": "mặt tức giận",
-  "😭": "mặt khóc",
+  "😄": "mặt cười", "😂": "mặt khóc vì cười", "🔥": "lửa",
+  "💪": "cơ bắp", "👏": "vỗ tay", "😈": "mặt quỷ",
+  "🤯": "bùng nổ đầu", "💀": "đầu lâu", "🎉": "pháo giấy", "⚡": "sét đánh",
 };
 
 function textToSpeechVN(text: string) {
   try {
     if (!("speechSynthesis" in window)) return;
-    // Replace emoji with Vietnamese names
     let spoken = text;
-    for (const [emoji, name] of Object.entries(EMOJI_NAMES)) {
+    for (const [emoji, name] of Object.entries(EMOJI_NAMES))
       spoken = spoken.split(emoji).join(` ${name} `);
-    }
-    // Clean up extra spaces
     spoken = spoken.replace(/\s+/g, " ").trim();
     if (!spoken) return;
-
     window.speechSynthesis.cancel();
     const utter = new SpeechSynthesisUtterance(spoken);
-    utter.lang = "vi-VN";
-    utter.rate = 1.05;
-    utter.pitch = 1.0;
-    utter.volume = 0.85;
-
-    // Try to pick a Vietnamese voice if available
+    utter.lang = "vi-VN"; utter.rate = 1.05; utter.pitch = 1.0; utter.volume = 0.85;
     const voices = window.speechSynthesis.getVoices();
     const viVoice = voices.find(v => v.lang.startsWith("vi"));
     if (viVoice) utter.voice = viVoice;
-
     window.speechSynthesis.speak(utter);
   } catch {}
 }
+
+// Board background presets: label + value (stored in localStorage)
+const BG_OPTIONS = [
+  { id: "default",    label: "Da Trời",  color: "#06091a" },
+  { id: "navy",       label: "Đêm Xanh", color: "#04071a" },
+  { id: "midnight",   label: "Nửa Đêm",  color: "#020510" },
+  { id: "pitch",      label: "Hắc Ám",   color: "#010108" },
+  { id: "darkgreen",  label: "Rừng Đêm", color: "#020a06" },
+  { id: "darkmaroon", label: "Đỏ Đêm",   color: "#0a0204" },
+];
+
+const BORDER_OPTIONS = [
+  { id: "default", label: "Mặc định",  color: "rgba(70,120,210,0.56)" },
+  { id: "white",   label: "Trắng",     color: "rgba(220,230,255,0.55)" },
+  { id: "gold",    label: "Vàng",      color: "rgba(255,210,0,0.70)" },
+  { id: "teal",    label: "Ngọc Lam",  color: "rgba(0,212,192,0.68)" },
+  { id: "purple",  label: "Tím",       color: "rgba(160,80,255,0.68)" },
+  { id: "red",     label: "Đỏ",        color: "rgba(255,60,60,0.65)" },
+];
 
 export default function GamePage() {
   const params = useParams<{ roomId: string }>();
@@ -83,7 +79,8 @@ export default function GamePage() {
   const [aiHint, setAiHint]           = useState<[number, number] | null>(null);
   const [cheatActive, setCheatActive] = useState(false);
   const [showChat, setShowChat]       = useState(false);
-  const [showTimeMenu, setShowTimeMenu] = useState(false);
+  const [showTimeMenu, setShowTimeMenu]   = useState(false);
+  const [showBoardStyle, setShowBoardStyle] = useState(false);
   const [showPostGame, setShowPostGame] = useState(false);
   const [timer, setTimer]             = useState(30);
   const [chatHistory, setChatHistory] = useState<ChatMsg[]>([]);
@@ -94,6 +91,8 @@ export default function GamePage() {
   const myName     = localStorage.getItem("gomoku_name") || "";
   const isThanhDat = myName === "Thành Đạt";
   const [activeSkin, setActiveSkin] = useState(localStorage.getItem("gomoku_skin") || "classic");
+  const [boardBg, setBoardBg]     = useState(localStorage.getItem("gomoku_board_bg") || "default");
+  const [boardBorder, setBoardBorder] = useState(localStorage.getItem("gomoku_board_border") || "default");
   const sessionId  = localStorage.getItem("gomoku_session") || "";
 
   const { playPlace, playWin, playLose, playChat, playTick, playConfirm } = useSound(activeSkin);
@@ -106,7 +105,7 @@ export default function GamePage() {
   const amLoser  = room?.status === "finished" && room.winner !== 0 && room.winner !== myPiece;
   const isVsAI   = (room?.aiPiece ?? 0) !== 0;
 
-  // ── join room ───────────────────────────────────────────────────────────────
+  // ── join room ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (joinedRef.current) return;
     joinedRef.current = true;
@@ -114,8 +113,7 @@ export default function GamePage() {
 
     socket.emit("join_room", { roomId, name: myName, sessionId }, (res: any) => {
       if (res.error) { setError(res.error); return; }
-      setRoom(res.room);
-      setMyPiece(res.piece);
+      setRoom(res.room); setMyPiece(res.piece);
     });
 
     socket.on("room_updated", (updated: GameRoom) => {
@@ -124,7 +122,6 @@ export default function GamePage() {
             && prev.moveCount !== updated.moveCount) playPlace();
         if (prev?.status === "playing" && updated.status === "finished")
           setTimeout(() => setShowPostGame(true), 800);
-        // Auto-close post-game modal when next game starts
         if (prev?.status === "finished" && updated.status === "playing")
           setShowPostGame(false);
         return updated;
@@ -145,12 +142,9 @@ export default function GamePage() {
         color: data.color, y, startX: window.innerWidth + 80,
       }]);
       setTimeout(() => setDanmakuMessages(prev => prev.filter(m => m.id !== id)), 7000);
-
-      // TTS: read the message aloud in Vietnamese
       textToSpeechVN(`${data.name} nói: ${data.message}`);
     });
 
-    // Ensure voices are loaded (Chrome lazy-loads)
     if ("speechSynthesis" in window) {
       window.speechSynthesis.getVoices();
       window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
@@ -159,7 +153,7 @@ export default function GamePage() {
     return () => { socket.off("room_updated"); socket.off("chat_message"); };
   }, [roomId]);
 
-  // ── win/lose sound ──────────────────────────────────────────────────────────
+  // ── sounds ────────────────────────────────────────────────────────────────
   useEffect(() => {
     if (!room || room.status !== "finished") return;
     if (prevStatusRef.current === "finished") return;
@@ -172,14 +166,14 @@ export default function GamePage() {
     if (room?.status !== "finished") prevStatusRef.current = room?.status ?? "";
   }, [room?.status]);
 
-  // ── TIMER: reset when turn changes ─────────────────────────────────────────
+  // ── timer reset ───────────────────────────────────────────────────────────
   useEffect(() => {
     if (!room) return;
     setTimer(room.turnTime);
     timeoutFiredRef.current = false;
   }, [room?.currentTurn, room?.id, room?.turnTime]);
 
-  // ── TIMER: countdown ───────────────────────────────────────────────────────
+  // ── timer countdown ───────────────────────────────────────────────────────
   useEffect(() => {
     if (!room || room.status !== "playing") return;
     const myTurnNow = room.currentTurn === myPiece;
@@ -200,7 +194,7 @@ export default function GamePage() {
     return () => clearInterval(id);
   }, [room?.currentTurn, room?.status]);
 
-  // ── AI hint refresh ─────────────────────────────────────────────────────────
+  // ── AI hint ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (cheatActive && room?.status === "playing" && isMyTurn) {
       getSocket().emit("get_ai_hint", { roomId, piece: myPiece }, (res: any) => {
@@ -209,7 +203,7 @@ export default function GamePage() {
     }
   }, [room?.moveCount, cheatActive, isMyTurn]);
 
-  // ── handlers ────────────────────────────────────────────────────────────────
+  // ── handlers ──────────────────────────────────────────────────────────────
   const handleMove = useCallback((row: number, col: number) => {
     if (!isMyTurn) return;
     playConfirm();
@@ -244,9 +238,17 @@ export default function GamePage() {
     getSocket().emit("chat_message", { roomId, name: myName, message, color });
   }
 
+  function handleBoardBg(id: string) {
+    setBoardBg(id); localStorage.setItem("gomoku_board_bg", id);
+  }
+  function handleBoardBorder(id: string) {
+    setBoardBorder(id); localStorage.setItem("gomoku_board_border", id);
+  }
+
   const p1 = room?.players.find(p => p.piece === 1);
   const p2 = room?.players.find(p => p.piece === 2);
   const turnPlayer = room?.players.find(p => p.piece === room?.currentTurn);
+  const isPlaying  = room?.status === "playing";
 
   if (error) return (
     <div className="error-page">
@@ -264,8 +266,11 @@ export default function GamePage() {
     </div>
   );
 
+  const p1Active = isPlaying && room.currentTurn === 1;
+  const p2Active = isPlaying && room.currentTurn === 2;
+
   return (
-    <div className="game-page">
+    <div className="game-page" onClick={() => { setShowTimeMenu(false); setShowBoardStyle(false); }}>
       <div className="stars" />
 
       {/* ═══ HEADER ═══ */}
@@ -292,7 +297,6 @@ export default function GamePage() {
 
           <div className="header-spacer" />
 
-          {/* Timer + turn status */}
           <div className="turn-status">
             {room.status === "waiting" && <span className="waiting-text">⏳ Chờ đối thủ...</span>}
             {room.status === "playing" && (
@@ -312,10 +316,10 @@ export default function GamePage() {
 
           <div className="header-spacer" />
 
-          {/* Actions */}
-          <div className="header-actions">
+          <div className="header-actions" onClick={e => e.stopPropagation()}>
+            {/* Time picker */}
             <div className="time-picker-wrap">
-              <button className="icon-btn" onClick={() => setShowTimeMenu(v => !v)}>
+              <button className="icon-btn" onClick={() => { setShowTimeMenu(v => !v); setShowBoardStyle(false); }}>
                 ⏱{room.turnTime}s
               </button>
               {showTimeMenu && (
@@ -330,6 +334,49 @@ export default function GamePage() {
               )}
             </div>
 
+            {/* Board style button */}
+            <div className="board-style-wrap">
+              <button
+                className={`icon-btn board-style-btn ${showBoardStyle ? "active" : ""}`}
+                title="Tùy chỉnh bàn cờ"
+                onClick={() => { setShowBoardStyle(v => !v); setShowTimeMenu(false); }}
+              >
+                🎨
+              </button>
+              {showBoardStyle && (
+                <div className="board-style-panel">
+                  <div className="bsp-title">Nền bàn cờ</div>
+                  <div className="bsp-swatches">
+                    {BG_OPTIONS.map(opt => (
+                      <button
+                        key={opt.id}
+                        className={`bsp-swatch ${boardBg === opt.id ? "active" : ""}`}
+                        style={{ background: opt.color }}
+                        title={opt.label}
+                        onClick={() => handleBoardBg(opt.id)}
+                      >
+                        {boardBg === opt.id && <span className="bsp-check">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="bsp-title">Viền khung</div>
+                  <div className="bsp-swatches">
+                    {BORDER_OPTIONS.map(opt => (
+                      <button
+                        key={opt.id}
+                        className={`bsp-swatch bsp-border-swatch ${boardBorder === opt.id ? "active" : ""}`}
+                        style={{ background: opt.color, border: `2px solid ${opt.color}` }}
+                        title={opt.label}
+                        onClick={() => handleBoardBorder(opt.id)}
+                      >
+                        {boardBorder === opt.id && <span className="bsp-check">✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
             {isThanhDat && (
               <button className={`cheat-btn ${cheatActive ? "active" : ""}`} onClick={handleCheat}>
                 ⚡ CHEAT
@@ -338,23 +385,31 @@ export default function GamePage() {
           </div>
         </div>
 
-        {/* Row 2 — players */}
+        {/* Row 2 — players with turn indicator */}
         <div className="header-row2">
-          <div className="player-card p1-card">
-            <span className="p-dot" />
+          <div className={`player-card p1-card ${p1Active ? "active-turn" : ""}`}>
+            <span className={`p-dot ${p1Active ? "dot-active" : ""}`} />
             <span className="p-icon x-icon">✕</span>
-            <span className="p-name">{p1?.name ?? "—"}</span>
+            <div className="p-info">
+              <span className="p-name">{p1?.name ?? "—"}</span>
+              {p1Active && <span className="p-turn-indicator">▶ Đang đi</span>}
+            </div>
             <span className="p-score">{room.scores[1]}</span>
           </div>
+
           <div className="vs-badge">
             <span>VS</span>
             <span className="board-size-badge">{room.boardSize}×{room.boardSize}</span>
           </div>
-          <div className="player-card p2-card">
+
+          <div className={`player-card p2-card ${p2Active ? "active-turn" : ""}`}>
             <span className="p-score">{room.scores[2]}</span>
-            <span className="p-name">{p2?.name ?? (room.status === "waiting" ? "Chờ..." : "—")}</span>
+            <div className="p-info p-info-right">
+              <span className="p-name">{p2?.name ?? (room.status === "waiting" ? "Chờ..." : "—")}</span>
+              {p2Active && <span className="p-turn-indicator p-turn-indicator-right">▶ Đang đi</span>}
+            </div>
             <span className="p-icon o-icon">○</span>
-            <span className="p-dot" />
+            <span className={`p-dot ${p2Active ? "dot-active" : ""}`} />
           </div>
         </div>
       </header>
@@ -372,10 +427,12 @@ export default function GamePage() {
           skin={activeSkin}
           aiHint={isThanhDat ? aiHint : null}
           danmakuMessages={danmakuMessages}
+          boardBg={boardBg}
+          boardBorder={boardBorder}
         />
       </div>
 
-      {/* Chat FAB — hidden in AI mode */}
+      {/* Chat FAB */}
       {!isVsAI && (
         <button
           className={`chat-fab ${chatHistory.length > 0 && !showChat ? "has-msgs" : ""}`}
@@ -398,7 +455,6 @@ export default function GamePage() {
         />
       )}
 
-      {/* Post-game modal */}
       {showPostGame && room.status === "finished" && (
         <PostGameModal
           winner={room.winner}
