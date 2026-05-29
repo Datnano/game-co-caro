@@ -20,48 +20,43 @@ interface Props {
 }
 
 interface SkinConfig {
-  xColor: string; xGlow: string; oColor: string; oGlow: string;
-  xColor2: string; oColor2: string; // secondary / highlight color
-  gridLine: string; gridBorder: string; bgColor: string; coordColor: string;
+  xColor: string; xGlow: string;
+  oColor: string; oGlow: string;
+  gridLine: string; gridBorder: string;
+  bgColor: string; coordColor: string;
 }
 
 function getSkin(skin: string): SkinConfig {
   switch (skin) {
     case "cyberpunk": return {
-      xColor:"#ff00ff", xGlow:"#aa00aa", xColor2:"#ff88ff",
-      oColor:"#00ffff", oGlow:"#009999", oColor2:"#88ffff",
-      gridLine:"rgba(0,255,255,0.22)", gridBorder:"rgba(0,255,255,0.55)",
-      bgColor:"#050010", coordColor:"rgba(0,255,255,0.65)",
+      xColor:"#ff00ff", xGlow:"#880088",
+      oColor:"#00ffff", oGlow:"#007777",
+      gridLine:"rgba(0,255,255,0.20)", gridBorder:"rgba(0,255,255,0.52)",
+      bgColor:"#050010", coordColor:"rgba(0,255,255,0.62)",
     };
     case "gold": return {
-      xColor:"#ffd700", xGlow:"#bb8800", xColor2:"#fff3a0",
-      oColor:"#ff8c00", oGlow:"#bb5500", oColor2:"#ffcc77",
-      gridLine:"rgba(255,215,0,0.22)", gridBorder:"rgba(255,215,0,0.55)",
-      bgColor:"#080500", coordColor:"rgba(255,215,0,0.7)",
+      xColor:"#ffd700", xGlow:"#997700",
+      oColor:"#e07800", oGlow:"#884400",
+      gridLine:"rgba(255,215,0,0.20)", gridBorder:"rgba(255,215,0,0.52)",
+      bgColor:"#080500", coordColor:"rgba(255,200,0,0.68)",
     };
     case "silver": return {
-      xColor:"#e0e0e0", xGlow:"#909090", xColor2:"#ffffff",
-      oColor:"#b0b8c8", oGlow:"#707888", oColor2:"#d8e0f0",
-      gridLine:"rgba(200,210,230,0.18)", gridBorder:"rgba(200,210,230,0.48)",
-      bgColor:"#07080f", coordColor:"rgba(180,190,210,0.6)",
+      xColor:"#d0d0d0", xGlow:"#888888",
+      oColor:"#6899cc", oGlow:"#334d77",
+      gridLine:"rgba(200,210,230,0.18)", gridBorder:"rgba(200,210,230,0.46)",
+      bgColor:"#07080f", coordColor:"rgba(180,190,210,0.58)",
     };
-    case "fire": return {
-      xColor:"#ff5500", xGlow:"#cc1100", xColor2:"#ffcc00",
-      oColor:"#ff8800", oGlow:"#cc4400", oColor2:"#ffee44",
-      gridLine:"rgba(255,90,0,0.22)", gridBorder:"rgba(255,90,0,0.52)",
-      bgColor:"#0d0100", coordColor:"rgba(255,110,20,0.68)",
-    };
-    case "water": return {
-      xColor:"#00aaff", xGlow:"#003388", xColor2:"#88ddff",
-      oColor:"#0055ff", oGlow:"#001166", oColor2:"#66ccff",
-      gridLine:"rgba(0,160,255,0.22)", gridBorder:"rgba(0,180,255,0.52)",
-      bgColor:"#00030f", coordColor:"rgba(0,185,255,0.68)",
+    case "element": return {
+      xColor:"#ff5500", xGlow:"#cc2200",
+      oColor:"#0077ff", oGlow:"#003399",
+      gridLine:"rgba(140,80,220,0.20)", gridBorder:"rgba(140,80,220,0.48)",
+      bgColor:"#060410", coordColor:"rgba(180,130,240,0.65)",
     };
     default: return { // classic
-      xColor:"#ff3333", xGlow:"#bb0000", xColor2:"#ff9999",
-      oColor:"#3399ff", oGlow:"#0055bb", oColor2:"#99ccff",
-      gridLine:"rgba(75,125,215,0.26)", gridBorder:"rgba(75,125,215,0.58)",
-      bgColor:"#06091a", coordColor:"rgba(130,170,230,0.62)",
+      xColor:"#ff3333", xGlow:"#990000",
+      oColor:"#3399ff", oGlow:"#004499",
+      gridLine:"rgba(70,120,210,0.24)", gridBorder:"rgba(70,120,210,0.56)",
+      bgColor:"#06091a", coordColor:"rgba(130,170,230,0.60)",
     };
   }
 }
@@ -70,14 +65,12 @@ function getLayout(W: number, H: number, boardSize: number) {
   const coordScale = Math.max(0.032, Math.min(0.056, 1.1 / boardSize));
   const PL = W * coordScale * 1.6;
   const PT = W * coordScale * 1.3;
-  const PR = W * 0.012;
-  const PB = W * 0.010;
-  const GW = W - PL - PR;
-  const GH = H - PT - PB;
+  const GW = W - PL - W * 0.012;
+  const GH = H - PT - W * 0.010;
   const CW = GW / boardSize;
   const CH = GH / boardSize;
   const R  = Math.min(CW, CH) * 0.44;
-  return { PL, PT, PR, PB, GW, GH, CW, CH, R };
+  return { PL, PT, GW, GH, CW, CH, R };
 }
 
 function cellCenter(row: number, col: number, L: ReturnType<typeof getLayout>) {
@@ -92,145 +85,106 @@ function hitCell(mx: number, my: number, W: number, H: number, boardSize: number
   return [row, col];
 }
 
-// ── piece renderers ──────────────────────────────────────────────────────────
-
-function drawX(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
-               s: SkinConfig, skin: string, alpha = 1) {
-  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
-  const off = R * 0.57;
-
-  if (skin === "cyberpunk") {
-    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 12;
-    ctx.strokeStyle = s.xColor; ctx.lineWidth = Math.max(1.5, R * 0.12);
-    const sides = 6;
-    ctx.beginPath();
-    for (let i = 0; i < sides; i++) {
-      const a = Math.PI*2*i/sides - Math.PI/6;
-      const px = cx + R*0.70*Math.cos(a), py = cy + R*0.70*Math.sin(a);
-      i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
-    }
-    ctx.closePath(); ctx.stroke();
-    ctx.lineWidth = Math.max(1.8, R*0.14);
-    const o2 = off * 0.48;
-    ctx.beginPath(); ctx.moveTo(cx-o2,cy-o2); ctx.lineTo(cx+o2,cy+o2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+o2,cy-o2); ctx.lineTo(cx-o2,cy+o2); ctx.stroke();
-
-  } else if (skin === "fire") {
-    // Outer glow (red-orange)
-    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 32;
-    ctx.strokeStyle = s.xColor; ctx.lineWidth = R * 0.34;
-    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
-    // Inner flame highlight (yellow)
-    ctx.shadowColor = s.xColor2; ctx.shadowBlur = 16;
-    ctx.strokeStyle = s.xColor2; ctx.lineWidth = R * 0.13;
-    ctx.beginPath(); ctx.moveTo(cx-off*0.7,cy-off*0.7); ctx.lineTo(cx+off*0.7,cy+off*0.7); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off*0.7,cy-off*0.7); ctx.lineTo(cx-off*0.7,cy+off*0.7); ctx.stroke();
-    // Sparks at tips
-    ctx.shadowBlur = 10;
-    for (const [sx,sy] of [[-off,-off],[off,off],[off,-off],[-off,off]]) {
-      ctx.fillStyle = s.xColor2;
-      ctx.beginPath(); ctx.arc(cx+sx*0.95, cy+sy*0.95, R*0.07, 0, Math.PI*2); ctx.fill();
-    }
-
-  } else if (skin === "water") {
-    // Deep blue outer
-    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 28;
-    ctx.strokeStyle = s.xColor; ctx.lineWidth = R * 0.30;
-    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
-    // Cyan inner ripple
-    ctx.shadowColor = s.xColor2; ctx.shadowBlur = 14;
-    ctx.strokeStyle = s.xColor2; ctx.lineWidth = R * 0.11;
-    ctx.beginPath(); ctx.moveTo(cx-off*0.65,cy-off*0.65); ctx.lineTo(cx+off*0.65,cy+off*0.65); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off*0.65,cy-off*0.65); ctx.lineTo(cx-off*0.65,cy+off*0.65); ctx.stroke();
-    // Water droplet dots at center
-    ctx.fillStyle = s.xColor2; ctx.shadowBlur = 8;
-    ctx.beginPath(); ctx.arc(cx, cy, R*0.11, 0, Math.PI*2); ctx.fill();
-
-  } else {
-    // Classic, gold, silver
-    ctx.shadowColor = s.xGlow; ctx.shadowBlur = 24;
-    ctx.strokeStyle = s.xColor; ctx.lineWidth = R * 0.30;
-    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
-    ctx.shadowBlur = 8; ctx.strokeStyle = "rgba(255,255,255,0.5)"; ctx.lineWidth = R * 0.09;
-    ctx.beginPath(); ctx.moveTo(cx-off,cy-off); ctx.lineTo(cx+off,cy+off); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(cx+off,cy-off); ctx.lineTo(cx-off,cy+off); ctx.stroke();
-  }
+// ── element skin: emoji icons ────────────────────────────────────────────────
+function drawElement(ctx: CanvasRenderingContext2D, cx: number, cy: number,
+                     R: number, piece: 1 | 2, alpha = 1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const emoji = piece === 1 ? "🔥" : "💧";
+  const sz = Math.floor(R * 1.9);
+  ctx.font = `${sz}px serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = piece === 1 ? "#ff4400" : "#0044cc";
+  ctx.shadowBlur = R * 0.7;
+  ctx.fillText(emoji, cx, cy + sz * 0.04); // slight vertical offset for emoji
   ctx.restore();
 }
 
-function drawO(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
-               s: SkinConfig, skin: string, alpha = 1) {
-  ctx.save(); ctx.globalAlpha = alpha;
-
-  if (skin === "cyberpunk") {
-    const sides = 8;
-    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 12;
-    ctx.strokeStyle = s.oColor; ctx.lineWidth = Math.max(1.5, R*0.12);
-    ctx.beginPath();
-    for (let i = 0; i < sides; i++) {
-      const a = Math.PI*2*i/sides;
-      const px = cx + R*0.70*Math.cos(a), py = cy + R*0.70*Math.sin(a);
-      i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
-    }
-    ctx.closePath(); ctx.stroke();
-    ctx.fillStyle = s.oColor; ctx.shadowBlur = 8;
-    ctx.beginPath(); ctx.arc(cx, cy, R*0.14, 0, Math.PI*2); ctx.fill();
-
-  } else if (skin === "fire") {
-    // Outer fire ring
-    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 32;
-    ctx.strokeStyle = s.oColor; ctx.lineWidth = R * 0.30;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI*2); ctx.stroke();
-    // Inner yellow ring
-    ctx.shadowColor = s.oColor2; ctx.shadowBlur = 18;
-    ctx.strokeStyle = s.oColor2; ctx.lineWidth = R * 0.12;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.36, 0, Math.PI*2); ctx.stroke();
-    // Flame center dot
-    ctx.fillStyle = s.oColor2; ctx.shadowBlur = 12;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.10, 0, Math.PI*2); ctx.fill();
-    // Flame tips at 4 cardinal points
-    for (let i = 0; i < 4; i++) {
-      const a = Math.PI/2 * i;
-      ctx.strokeStyle = s.oColor2; ctx.lineWidth = R * 0.07;
-      ctx.beginPath();
-      ctx.moveTo(cx + Math.cos(a)*R*0.60, cy + Math.sin(a)*R*0.60);
-      ctx.lineTo(cx + Math.cos(a)*R*0.82, cy + Math.sin(a)*R*0.82);
-      ctx.stroke();
-    }
-
-  } else if (skin === "water") {
-    // Outer deep ring
-    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 28;
-    ctx.strokeStyle = s.oColor; ctx.lineWidth = R * 0.28;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI*2); ctx.stroke();
-    // Middle ripple ring
-    ctx.shadowColor = s.oColor2; ctx.shadowBlur = 16;
-    ctx.strokeStyle = s.oColor2; ctx.lineWidth = R * 0.14;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.38, 0, Math.PI*2); ctx.stroke();
-    // Inner ripple
-    ctx.strokeStyle = `rgba(150,230,255,0.55)`; ctx.lineWidth = R * 0.08; ctx.shadowBlur = 8;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.20, 0, Math.PI*2); ctx.stroke();
-    // Drop center
-    ctx.fillStyle = s.oColor2;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.09, 0, Math.PI*2); ctx.fill();
-
-  } else {
-    ctx.shadowColor = s.oGlow; ctx.shadowBlur = 24;
-    ctx.strokeStyle = s.oColor; ctx.lineWidth = R * 0.27;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI*2); ctx.stroke();
-    ctx.shadowBlur = 7; ctx.strokeStyle = "rgba(255,255,255,0.48)"; ctx.lineWidth = R * 0.08;
-    ctx.beginPath(); ctx.arc(cx, cy, R * 0.57, 0, Math.PI*2); ctx.stroke();
+// ── cyberpunk shapes ─────────────────────────────────────────────────────────
+function drawCyberpunkX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
+                         R: number, s: SkinConfig, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
+  const off = R * 0.48;
+  // hexagon outline
+  ctx.shadowColor = s.xGlow; ctx.shadowBlur = 14;
+  ctx.strokeStyle = s.xColor; ctx.lineWidth = Math.max(1.5, R * 0.11);
+  ctx.beginPath();
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI * 2 * i / 6 - Math.PI / 6;
+    const px = cx + R * 0.68 * Math.cos(a), py = cy + R * 0.68 * Math.sin(a);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
   }
+  ctx.closePath(); ctx.stroke();
+  // inner X
+  ctx.lineWidth = Math.max(2, R * 0.15);
+  ctx.beginPath(); ctx.moveTo(cx - off * 0.5, cy - off * 0.5); ctx.lineTo(cx + off * 0.5, cy + off * 0.5); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + off * 0.5, cy - off * 0.5); ctx.lineTo(cx - off * 0.5, cy + off * 0.5); ctx.stroke();
+  ctx.restore();
+}
+
+function drawCyberpunkO(ctx: CanvasRenderingContext2D, cx: number, cy: number,
+                         R: number, s: SkinConfig, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  // octagon
+  ctx.shadowColor = s.oGlow; ctx.shadowBlur = 14;
+  ctx.strokeStyle = s.oColor; ctx.lineWidth = Math.max(1.5, R * 0.11);
+  ctx.beginPath();
+  for (let i = 0; i < 8; i++) {
+    const a = Math.PI * 2 * i / 8;
+    const px = cx + R * 0.68 * Math.cos(a), py = cy + R * 0.68 * Math.sin(a);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.closePath(); ctx.stroke();
+  // center dot
+  ctx.fillStyle = s.oColor; ctx.shadowBlur = 8;
+  ctx.beginPath(); ctx.arc(cx, cy, R * 0.13, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// ── standard X and O (classic / gold / silver) ───────────────────────────────
+// Both use the SAME size parameters so they are visually equal
+function drawStandardX(ctx: CanvasRenderingContext2D, cx: number, cy: number,
+                        R: number, s: SkinConfig, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.lineCap = "round";
+  const off = R * 0.52;           // extent from center
+  const lw  = R * 0.28;           // stroke width (same as O)
+  ctx.shadowColor = s.xGlow; ctx.shadowBlur = 22;
+  ctx.strokeStyle = s.xColor; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(cx - off, cy - off); ctx.lineTo(cx + off, cy + off); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + off, cy - off); ctx.lineTo(cx - off, cy + off); ctx.stroke();
+  // inner white highlight
+  ctx.shadowBlur = 6; ctx.strokeStyle = "rgba(255,255,255,0.42)"; ctx.lineWidth = lw * 0.28;
+  ctx.beginPath(); ctx.moveTo(cx - off, cy - off); ctx.lineTo(cx + off, cy + off); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx + off, cy - off); ctx.lineTo(cx - off, cy + off); ctx.stroke();
+  ctx.restore();
+}
+
+function drawStandardO(ctx: CanvasRenderingContext2D, cx: number, cy: number,
+                        R: number, s: SkinConfig, alpha = 1) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  const radius = R * 0.52;        // same footprint as X off
+  const lw     = R * 0.28;        // same stroke weight as X
+  ctx.shadowColor = s.oGlow; ctx.shadowBlur = 22;
+  ctx.strokeStyle = s.oColor; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
+  // inner white highlight
+  ctx.shadowBlur = 6; ctx.strokeStyle = "rgba(255,255,255,0.42)"; ctx.lineWidth = lw * 0.28;
+  ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
   ctx.restore();
 }
 
 function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: number,
                    piece: 1 | 2, s: SkinConfig, skin: string, alpha = 1) {
-  if (piece === 1) drawX(ctx, cx, cy, R, s, skin, alpha);
-  else             drawO(ctx, cx, cy, R, s, skin, alpha);
+  if (skin === "element") { drawElement(ctx, cx, cy, R, piece, alpha); return; }
+  if (skin === "cyberpunk") {
+    if (piece === 1) drawCyberpunkX(ctx, cx, cy, R, s, alpha);
+    else             drawCyberpunkO(ctx, cx, cy, R, s, alpha);
+    return;
+  }
+  // classic / gold / silver
+  if (piece === 1) drawStandardX(ctx, cx, cy, R, s, alpha);
+  else             drawStandardO(ctx, cx, cy, R, s, alpha);
 }
 
 // ── component ────────────────────────────────────────────────────────────────
@@ -259,18 +213,17 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
 
     // Background
     ctx.fillStyle = s.bgColor; ctx.fillRect(0, 0, W, H);
-    // Fire: subtle red radial glow; Water: subtle blue
-    if (skin === "fire") {
-      const fg = ctx.createRadialGradient(W/2, H*0.7, 0, W/2, H*0.7, W*0.7);
-      fg.addColorStop(0, "rgba(100,20,0,0.18)"); fg.addColorStop(1, "transparent");
-      ctx.fillStyle = fg; ctx.fillRect(0, 0, W, H);
-    } else if (skin === "water") {
-      const wg = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.6);
-      wg.addColorStop(0, "rgba(0,40,120,0.14)"); wg.addColorStop(1, "transparent");
-      ctx.fillStyle = wg; ctx.fillRect(0, 0, W, H);
+    if (skin === "element") {
+      // Split element glow — left=fire, right=water
+      const gl = ctx.createRadialGradient(W*0.25, H*0.65, 0, W*0.25, H*0.65, W*0.5);
+      gl.addColorStop(0, "rgba(120,30,0,0.14)"); gl.addColorStop(1, "transparent");
+      ctx.fillStyle = gl; ctx.fillRect(0, 0, W, H);
+      const gr2 = ctx.createRadialGradient(W*0.75, H*0.35, 0, W*0.75, H*0.35, W*0.5);
+      gr2.addColorStop(0, "rgba(0,30,120,0.14)"); gr2.addColorStop(1, "transparent");
+      ctx.fillStyle = gr2; ctx.fillRect(0, 0, W, H);
     } else {
-      const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.65);
-      gr.addColorStop(0, "rgba(30,60,140,0.07)"); gr.addColorStop(1, "transparent");
+      const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.6);
+      gr.addColorStop(0, "rgba(30,60,140,0.06)"); gr.addColorStop(1, "transparent");
       ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
     }
 
@@ -316,22 +269,22 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
         drawPiece(ctx, cx, cy, R, cell as 1|2, s, skin);
       }
 
-    // AI hint
+    // AI hint ring
     if (aiHint && status === "playing") {
       const [hr, hc] = aiHint;
       const { cx, cy } = cellCenter(hr, hc, L);
       const gA = (Math.sin(pulseRef.current * 2.8) + 1) / 2;
       ctx.save();
       ctx.shadowColor = "#ffee00"; ctx.shadowBlur = 22 + gA*16;
-      ctx.strokeStyle = `rgba(255,230,0,${0.6 + gA*0.4})`; ctx.lineWidth = 2;
+      ctx.strokeStyle = `rgba(255,230,0,${0.6+gA*0.4})`; ctx.lineWidth = 2;
       ctx.setLineDash([5,4]);
       ctx.beginPath(); ctx.arc(cx, cy, R*0.78, 0, Math.PI*2); ctx.stroke();
       ctx.setLineDash([]);
-      ctx.fillStyle = `rgba(255,240,0,${0.4 + gA*0.45})`;
+      ctx.fillStyle = `rgba(255,240,0,${0.4+gA*0.45})`;
       ctx.beginPath(); ctx.arc(cx, cy, R*0.18, 0, Math.PI*2); ctx.fill();
       for (let i = 0; i < 4; i++) {
         const a = Math.PI/4 + Math.PI/2*i;
-        ctx.strokeStyle = `rgba(255,240,0,${0.45 + gA*0.4})`; ctx.lineWidth = 1.5;
+        ctx.strokeStyle = `rgba(255,240,0,${0.45+gA*0.4})`; ctx.lineWidth = 1.5;
         ctx.beginPath();
         ctx.moveTo(cx + Math.cos(a)*R*0.88, cy + Math.sin(a)*R*0.88);
         ctx.lineTo(cx + Math.cos(a)*R*1.20, cy + Math.sin(a)*R*1.20);
@@ -343,24 +296,24 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     const canAct = status === "playing" && currentTurn === myPiece;
     const pending = pendingRef.current;
 
-    // Pending (first-click) cell
+    // Pending ghost + ring
     if (pending && canAct && board[pending[0]]?.[pending[1]] === 0) {
       const { cx, cy } = cellCenter(pending[0], pending[1], L);
-      drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.65);
+      drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.60);
       const ringA = 0.55 + Math.abs(pulse) * 0.45;
       ctx.save();
       ctx.shadowColor = myPiece===1 ? s.xGlow : s.oGlow; ctx.shadowBlur = 14;
       ctx.strokeStyle = myPiece===1
         ? `rgba(255,100,100,${ringA})` : `rgba(80,160,255,${ringA})`;
       ctx.lineWidth = 1.8; ctx.setLineDash([4,3]);
-      ctx.beginPath(); ctx.arc(cx, cy, R*0.92, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx, cy, R*0.90, 0, Math.PI*2); ctx.stroke();
       ctx.setLineDash([]);
       for (let i = 0; i < 4; i++) {
         const a = Math.PI/4 + Math.PI/2*i;
-        ctx.lineWidth = 2; ctx.strokeStyle = `rgba(255,255,255,${0.45 + ringA*0.35})`;
+        ctx.lineWidth = 2; ctx.strokeStyle = `rgba(255,255,255,${0.40+ringA*0.32})`;
         ctx.beginPath();
-        ctx.moveTo(cx + Math.cos(a)*R*0.96, cy + Math.sin(a)*R*0.96);
-        ctx.lineTo(cx + Math.cos(a)*R*1.20, cy + Math.sin(a)*R*1.20);
+        ctx.moveTo(cx + Math.cos(a)*R*0.94, cy + Math.sin(a)*R*0.94);
+        ctx.lineTo(cx + Math.cos(a)*R*1.18, cy + Math.sin(a)*R*1.18);
         ctx.stroke();
       }
       ctx.restore();
@@ -372,7 +325,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
       const isPending = pending && pending[0]===hover[0] && pending[1]===hover[1];
       if (!isPending) {
         const { cx, cy } = cellCenter(hover[0], hover[1], L);
-        drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.22);
+        drawPiece(ctx, cx, cy, R, myPiece, s, skin, 0.20);
       }
     }
 
@@ -437,7 +390,8 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     } else {
       clientX = e.clientX; clientY = e.clientY;
     }
-    return hitCell((clientX-rect.left)*scaleX, (clientY-rect.top)*scaleY, canvas.width, canvas.height, boardSize);
+    return hitCell((clientX-rect.left)*scaleX, (clientY-rect.top)*scaleY,
+                   canvas.width, canvas.height, boardSize);
   }
 
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
@@ -449,9 +403,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     const pending = pendingRef.current;
     if (pending && pending[0]===r && pending[1]===c) {
       pendingRef.current = null; onMove(r, c);
-    } else {
-      pendingRef.current = [r, c];
-    }
+    } else { pendingRef.current = [r, c]; }
   }
 
   function handleTouchEnd(e: React.TouchEvent<HTMLCanvasElement>) {
@@ -460,11 +412,10 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     const canvas = canvasRef.current;
     if (!canvas || e.changedTouches.length === 0) return;
     const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
     const t = e.changedTouches[0];
     const cell = hitCell(
-      (t.clientX-rect.left)*scaleX, (t.clientY-rect.top)*scaleY,
+      (t.clientX-rect.left)*(canvas.width/rect.width),
+      (t.clientY-rect.top)*(canvas.height/rect.height),
       canvas.width, canvas.height, boardSize
     );
     if (!cell) return;
@@ -473,9 +424,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     const pending = pendingRef.current;
     if (pending && pending[0]===r && pending[1]===c) {
       pendingRef.current = null; onMove(r, c);
-    } else {
-      pendingRef.current = [r, c];
-    }
+    } else { pendingRef.current = [r, c]; }
   }
 
   function handleMouseMove(e: React.MouseEvent<HTMLCanvasElement>) { hoverRef.current = getCell(e); }

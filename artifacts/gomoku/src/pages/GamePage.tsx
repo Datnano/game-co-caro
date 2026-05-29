@@ -19,6 +19,7 @@ export interface GameRoom {
   turnTime: number;
   boardSize: number;
   winCount: number;
+  aiPiece: 0 | 1 | 2;
 }
 
 const TIME_OPTIONS = [15, 30, 60, 90, 120];
@@ -28,36 +29,36 @@ export default function GamePage() {
   const roomId = (params.roomId ?? "").toUpperCase();
   const [, navigate] = useLocation();
 
-  const [room, setRoom] = useState<GameRoom | null>(null);
-  const [myPiece, setMyPiece] = useState<1 | 2>(1);
-  const [error, setError] = useState("");
-  const [aiHint, setAiHint] = useState<[number, number] | null>(null);
+  const [room, setRoom]               = useState<GameRoom | null>(null);
+  const [myPiece, setMyPiece]         = useState<1 | 2>(1);
+  const [error, setError]             = useState("");
+  const [aiHint, setAiHint]           = useState<[number, number] | null>(null);
   const [cheatActive, setCheatActive] = useState(false);
-  const [showChat, setShowChat] = useState(false);
+  const [showChat, setShowChat]       = useState(false);
   const [showTimeMenu, setShowTimeMenu] = useState(false);
   const [showPostGame, setShowPostGame] = useState(false);
-  const [timer, setTimer] = useState(30);
+  const [timer, setTimer]             = useState(30);
   const [chatHistory, setChatHistory] = useState<ChatMsg[]>([]);
   const [danmakuMessages, setDanmakuMessages] = useState<
     Array<{ id: string; text: string; color: string; y: number; startX: number }>
   >([]);
 
-  const myName = localStorage.getItem("gomoku_name") || "";
+  const myName     = localStorage.getItem("gomoku_name") || "";
   const isThanhDat = myName === "Thành Đạt";
   const [activeSkin, setActiveSkin] = useState(localStorage.getItem("gomoku_skin") || "classic");
-  const sessionId = localStorage.getItem("gomoku_session") || "";
+  const sessionId  = localStorage.getItem("gomoku_session") || "";
+
   const { playPlace, playWin, playLose, playChat, playTick, playConfirm } = useSound();
 
-  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
-  const prevTurnRef     = useRef<1 | 2 | null>(null);
-  const prevStatusRef   = useRef<string>("");
-  const joinedRef       = useRef(false);
   const timeoutFiredRef = useRef(false);
+  const joinedRef       = useRef(false);
+  const prevStatusRef   = useRef<string>("");
 
   const isMyTurn = room?.status === "playing" && room.currentTurn === myPiece;
   const amLoser  = room?.status === "finished" && room.winner !== 0 && room.winner !== myPiece;
+  const isVsAI   = (room?.aiPiece ?? 0) !== 0;
 
-  // ── join room ──────────────────────────────────────────────────────────────
+  // ── join room ───────────────────────────────────────────────────────────────
   useEffect(() => {
     if (joinedRef.current) return;
     joinedRef.current = true;
@@ -67,33 +68,26 @@ export default function GamePage() {
       if (res.error) { setError(res.error); return; }
       setRoom(res.room);
       setMyPiece(res.piece);
-      setTimer(res.room.turnTime ?? 30);
-      localStorage.setItem("gomoku_piece", String(res.piece));
     });
 
-    socket.on("room_updated", (updatedRoom: GameRoom) => {
+    socket.on("room_updated", (updated: GameRoom) => {
       setRoom(prev => {
-        if (prev?.status === "playing" && updatedRoom.status === "playing"
-            && prev.moveCount !== updatedRoom.moveCount) {
-          playPlace();
-        }
-        if (prev?.status === "playing" && updatedRoom.status === "finished") {
+        if (prev?.status === "playing" && updated.status === "playing"
+            && prev.moveCount !== updated.moveCount) playPlace();
+        if (prev?.status === "playing" && updated.status === "finished")
           setTimeout(() => setShowPostGame(true), 800);
-        }
-        return updatedRoom;
+        return updated;
       });
     });
 
     socket.on("chat_message", (data: { name: string; message: string; color: string; timestamp: number }) => {
       playChat();
       const id = crypto.randomUUID();
-      // Chat history
       setChatHistory(prev => [...prev.slice(-99), {
         id, name: data.name, text: data.message, color: data.color, ts: data.timestamp,
       }]);
-      // Danmaku
       const canvasEl = document.querySelector(".game-canvas") as HTMLCanvasElement | null;
-      const canvasH = canvasEl?.clientHeight ?? 400;
+      const canvasH  = canvasEl?.clientHeight ?? 400;
       const y = 55 + Math.random() * (canvasH - 110);
       setDanmakuMessages(prev => [...prev.slice(-10), {
         id, text: `${data.name}: ${data.message}`,
@@ -105,7 +99,7 @@ export default function GamePage() {
     return () => { socket.off("room_updated"); socket.off("chat_message"); };
   }, [roomId]);
 
-  // ── win/lose sound ─────────────────────────────────────────────────────────
+  // ── win/lose sound ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!room || room.status !== "finished") return;
     if (prevStatusRef.current === "finished") return;
@@ -118,36 +112,35 @@ export default function GamePage() {
     if (room?.status !== "finished") prevStatusRef.current = room?.status ?? "";
   }, [room?.status]);
 
-  // ── countdown timer ────────────────────────────────────────────────────────
+  // ── TIMER: reset when turn changes ─────────────────────────────────────────
   useEffect(() => {
-    if (!room || room.status !== "playing") {
-      if (timerRef.current) clearInterval(timerRef.current);
-      return;
-    }
-    if (prevTurnRef.current !== room.currentTurn) {
-      prevTurnRef.current = room.currentTurn;
-      timeoutFiredRef.current = false;
-      setTimer(room.turnTime ?? 30);
-    }
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
+    if (!room) return;
+    setTimer(room.turnTime);
+    timeoutFiredRef.current = false;
+  }, [room?.currentTurn, room?.id, room?.turnTime]);
+
+  // ── TIMER: countdown ───────────────────────────────────────────────────────
+  useEffect(() => {
+    if (!room || room.status !== "playing") return;
+    const myTurnNow = room.currentTurn === myPiece;
+    const id = setInterval(() => {
       setTimer(t => {
         if (t <= 1) {
-          clearInterval(timerRef.current!);
-          if (isMyTurn && !timeoutFiredRef.current) {
+          clearInterval(id);
+          if (myTurnNow && !timeoutFiredRef.current) {
             timeoutFiredRef.current = true;
             getSocket().emit("skip_turn", { roomId, piece: myPiece });
           }
           return 0;
         }
-        if (t <= 6 && isMyTurn) playTick();
+        if (t <= 5 && myTurnNow) playTick();
         return t - 1;
       });
     }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [room?.currentTurn, room?.status, room?.turnTime]);
+    return () => clearInterval(id);
+  }, [room?.currentTurn, room?.status]);
 
-  // ── AI hint refresh ────────────────────────────────────────────────────────
+  // ── AI hint refresh ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (cheatActive && room?.status === "playing" && isMyTurn) {
       getSocket().emit("get_ai_hint", { roomId, piece: myPiece }, (res: any) => {
@@ -156,7 +149,7 @@ export default function GamePage() {
     }
   }, [room?.moveCount, cheatActive, isMyTurn]);
 
-  // ── handlers ──────────────────────────────────────────────────────────────
+  // ── handlers ────────────────────────────────────────────────────────────────
   const handleMove = useCallback((row: number, col: number) => {
     if (!isMyTurn) return;
     playConfirm();
@@ -173,10 +166,7 @@ export default function GamePage() {
       getSocket().emit("get_ai_hint", { roomId, piece: myPiece }, (res: any) => {
         if (res?.move) setAiHint(res.move);
       });
-    } else {
-      setCheatActive(false);
-      setAiHint(null);
-    }
+    } else { setCheatActive(false); setAiHint(null); }
   }, [cheatActive, isThanhDat, roomId, myPiece]);
 
   function handleReset(firstPiece?: 1 | 2, newSkin?: string) {
@@ -201,8 +191,7 @@ export default function GamePage() {
   if (error) return (
     <div className="error-page">
       <div className="error-card">
-        <h2>Lỗi kết nối</h2>
-        <p>{error}</p>
+        <h2>Lỗi kết nối</h2><p>{error}</p>
         <button className="btn-primary" onClick={() => navigate("/")}>← Quay lại</button>
       </div>
     </div>
@@ -228,15 +217,23 @@ export default function GamePage() {
             ← Sảnh
           </button>
 
-          <div className="room-key-badge">
-            <span className="badge-label">KEY</span>
-            <span className="badge-sep">:</span>
-            <span className="badge-value">{room.id}</span>
-          </div>
+          {/* Only show room key badge in multiplayer */}
+          {!isVsAI && (
+            <div className="room-key-badge">
+              <span className="badge-label">KEY</span>
+              <span className="badge-sep">:</span>
+              <span className="badge-value">{room.id}</span>
+            </div>
+          )}
+          {isVsAI && (
+            <div className="room-key-badge ai-badge">
+              <span className="badge-value">🤖 AI</span>
+            </div>
+          )}
 
           <div className="header-spacer" />
 
-          {/* status / timer */}
+          {/* Timer + turn status */}
           <div className="turn-status">
             {room.status === "waiting" && <span className="waiting-text">⏳ Chờ đối thủ...</span>}
             {room.status === "playing" && (
@@ -256,7 +253,7 @@ export default function GamePage() {
 
           <div className="header-spacer" />
 
-          {/* actions */}
+          {/* Actions */}
           <div className="header-actions">
             <div className="time-picker-wrap">
               <button className="icon-btn" onClick={() => setShowTimeMenu(v => !v)}>
@@ -300,7 +297,7 @@ export default function GamePage() {
           </div>
           <div className="player-card p2-card">
             <span className="p-score">{room.scores[2]}</span>
-            <span className="p-name">{p2?.name ?? "Chờ..."}</span>
+            <span className="p-name">{p2?.name ?? (room.status === "waiting" ? "Chờ..." : "—")}</span>
             <span className="p-icon o-icon">○</span>
             <span className="p-dot" />
           </div>
@@ -323,18 +320,20 @@ export default function GamePage() {
         />
       </div>
 
-      {/* ═══ CHAT FAB ═══ */}
-      <button
-        className={`chat-fab ${chatHistory.length > 0 && !showChat ? "has-msgs" : ""}`}
-        onClick={() => setShowChat(v => !v)}
-      >
-        💬
-        {chatHistory.length > 0 && !showChat && (
-          <span className="chat-fab-count">{Math.min(chatHistory.length, 99)}</span>
-        )}
-      </button>
+      {/* Chat FAB — hidden in AI mode */}
+      {!isVsAI && (
+        <button
+          className={`chat-fab ${chatHistory.length > 0 && !showChat ? "has-msgs" : ""}`}
+          onClick={() => setShowChat(v => !v)}
+        >
+          💬
+          {chatHistory.length > 0 && !showChat && (
+            <span className="chat-fab-count">{Math.min(chatHistory.length, 99)}</span>
+          )}
+        </button>
+      )}
 
-      {showChat && (
+      {showChat && !isVsAI && (
         <ChatPanel
           myName={myName}
           myPiece={myPiece}
@@ -344,7 +343,7 @@ export default function GamePage() {
         />
       )}
 
-      {/* ═══ POST-GAME MODAL ═══ */}
+      {/* Post-game modal */}
       {showPostGame && room.status === "finished" && (
         <PostGameModal
           winner={room.winner}
