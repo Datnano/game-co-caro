@@ -12,7 +12,7 @@ const AI_NAMES: Record<AIDifficulty, string> = {
   hard:   "🤖 AI (Khó)",
 };
 
-function scheduleAIMove(io: SocketIOServer, roomId: string, delay = 600) {
+function scheduleAIMove(io: SocketIOServer, roomId: string, delay = 400) {
   setTimeout(() => {
     const room = getRoom(roomId);
     if (!room || room.status !== "playing") return;
@@ -25,10 +25,8 @@ function scheduleAIMove(io: SocketIOServer, roomId: string, delay = 600) {
     const result = makeMove(room.id, "AI_BOT", move[0], move[1]);
     if (result.success && result.room) {
       io.to(room.id).emit("room_updated", result.room);
-      // If AI wins or game ends, nothing more to do
-      // If it's now AI's turn again (shouldn't happen normally), don't recurse
     }
-  }, delay + Math.random() * 300);
+  }, delay);
 }
 
 export function setupSocketIO(io: SocketIOServer) {
@@ -47,11 +45,9 @@ export function setupSocketIO(io: SocketIOServer) {
         if ("error" in result) return cb({ error: result.error });
         socket.join(room.id);
 
-        // If AI mode: join AI as player 2 immediately so game starts
         if (data.aiDifficulty) {
           const aiName = AI_NAMES[data.aiDifficulty];
           joinRoom(room.id, "AI_BOT", aiName, "AI_SESSION");
-          // Now room.status = "playing", currentTurn = 1 (human goes first)
         }
 
         const fresh = getRoom(room.id)!;
@@ -83,24 +79,22 @@ export function setupSocketIO(io: SocketIOServer) {
         io.to(data.roomId).emit("room_updated", result.room);
         cb?.({ success: true });
 
-        // Schedule AI response if needed
         const room = result.room;
         if (room && room.status === "playing" && room.aiPiece !== 0 && room.currentTurn === room.aiPiece) {
-          const delay = room.aiDifficulty === "easy" ? 400
-                      : room.aiDifficulty === "medium" ? 600 : 900;
+          const delay = room.aiDifficulty === "easy" ? 350
+                      : room.aiDifficulty === "medium" ? 500 : 750;
           scheduleAIMove(io, data.roomId, delay);
         }
       } catch (e) { logger.error(e, "make_move"); cb?.({ error: "Lỗi đặt quân" }); }
     });
 
-    socket.on("reset_game", (data: { roomId: string; firstPiece?: 1 | 2 }) => {
+    socket.on("reset_game", (data: { roomId: string; requestPiece?: 1 | 2; firstPiece?: 1 | 2 }) => {
       try {
-        const room = resetGame(data.roomId, data.firstPiece);
+        const room = resetGame(data.roomId, data.requestPiece, data.firstPiece);
         if (!room) return;
         io.to(data.roomId).emit("room_updated", room);
-        // If AI goes first after reset
         if (room.aiPiece !== 0 && room.currentTurn === room.aiPiece) {
-          scheduleAIMove(io, data.roomId, 700);
+          scheduleAIMove(io, data.roomId, 600);
         }
       } catch (e) { logger.error(e, "reset_game"); }
     });
@@ -110,9 +104,8 @@ export function setupSocketIO(io: SocketIOServer) {
         const room = skipTurn(data.roomId, data.piece);
         if (!room) return;
         io.to(data.roomId).emit("room_updated", room);
-        // AI skip response
         if (room.aiPiece !== 0 && room.currentTurn === room.aiPiece) {
-          scheduleAIMove(io, data.roomId, 400);
+          scheduleAIMove(io, data.roomId, 350);
         }
       } catch (e) { logger.error(e, "skip_turn"); }
     });
@@ -134,7 +127,6 @@ export function setupSocketIO(io: SocketIOServer) {
       try {
         const room = getRoom(data.roomId);
         if (!room) return cb({ error: "Phòng không tồn tại" });
-        // Always use hard for hint
         const move = getAIMoveByDifficulty(room.board, data.piece, room.boardSize, room.winCount, "hard");
         cb({ move });
       } catch (e) { logger.error(e, "get_ai_hint"); cb({ error: "Lỗi AI" }); }

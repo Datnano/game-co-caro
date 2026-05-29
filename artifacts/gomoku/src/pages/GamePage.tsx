@@ -20,9 +20,57 @@ export interface GameRoom {
   boardSize: number;
   winCount: number;
   aiPiece: 0 | 1 | 2;
+  lastLoser: 0 | 1 | 2;
 }
 
 const TIME_OPTIONS = [15, 30, 60, 90, 120];
+
+// Map emoji characters to Vietnamese names for TTS
+const EMOJI_NAMES: Record<string, string> = {
+  "😄": "mặt cười",
+  "😂": "mặt khóc vì cười",
+  "🔥": "lửa",
+  "💪": "cơ bắp",
+  "👏": "vỗ tay",
+  "😈": "mặt quỷ",
+  "🤯": "bùng nổ đầu",
+  "💀": "đầu lâu",
+  "🎉": "pháo giấy",
+  "⚡": "sét đánh",
+  "❤️": "trái tim",
+  "👍": "giơ ngón cái",
+  "😎": "mặt ngầu",
+  "😡": "mặt tức giận",
+  "😭": "mặt khóc",
+};
+
+function textToSpeechVN(text: string) {
+  try {
+    if (!("speechSynthesis" in window)) return;
+    // Replace emoji with Vietnamese names
+    let spoken = text;
+    for (const [emoji, name] of Object.entries(EMOJI_NAMES)) {
+      spoken = spoken.split(emoji).join(` ${name} `);
+    }
+    // Clean up extra spaces
+    spoken = spoken.replace(/\s+/g, " ").trim();
+    if (!spoken) return;
+
+    window.speechSynthesis.cancel();
+    const utter = new SpeechSynthesisUtterance(spoken);
+    utter.lang = "vi-VN";
+    utter.rate = 1.05;
+    utter.pitch = 1.0;
+    utter.volume = 0.85;
+
+    // Try to pick a Vietnamese voice if available
+    const voices = window.speechSynthesis.getVoices();
+    const viVoice = voices.find(v => v.lang.startsWith("vi"));
+    if (viVoice) utter.voice = viVoice;
+
+    window.speechSynthesis.speak(utter);
+  } catch {}
+}
 
 export default function GamePage() {
   const params = useParams<{ roomId: string }>();
@@ -48,7 +96,7 @@ export default function GamePage() {
   const [activeSkin, setActiveSkin] = useState(localStorage.getItem("gomoku_skin") || "classic");
   const sessionId  = localStorage.getItem("gomoku_session") || "";
 
-  const { playPlace, playWin, playLose, playChat, playTick, playConfirm } = useSound();
+  const { playPlace, playWin, playLose, playChat, playTick, playConfirm } = useSound(activeSkin);
 
   const timeoutFiredRef = useRef(false);
   const joinedRef       = useRef(false);
@@ -76,6 +124,9 @@ export default function GamePage() {
             && prev.moveCount !== updated.moveCount) playPlace();
         if (prev?.status === "playing" && updated.status === "finished")
           setTimeout(() => setShowPostGame(true), 800);
+        // Auto-close post-game modal when next game starts
+        if (prev?.status === "finished" && updated.status === "playing")
+          setShowPostGame(false);
         return updated;
       });
     });
@@ -94,7 +145,16 @@ export default function GamePage() {
         color: data.color, y, startX: window.innerWidth + 80,
       }]);
       setTimeout(() => setDanmakuMessages(prev => prev.filter(m => m.id !== id)), 7000);
+
+      // TTS: read the message aloud in Vietnamese
+      textToSpeechVN(`${data.name} nói: ${data.message}`);
     });
+
+    // Ensure voices are loaded (Chrome lazy-loads)
+    if ("speechSynthesis" in window) {
+      window.speechSynthesis.getVoices();
+      window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+    }
 
     return () => { socket.off("room_updated"); socket.off("chat_message"); };
   }, [roomId]);
@@ -172,7 +232,7 @@ export default function GamePage() {
   function handleReset(firstPiece?: 1 | 2, newSkin?: string) {
     if (newSkin) { localStorage.setItem("gomoku_skin", newSkin); setActiveSkin(newSkin); }
     setShowPostGame(false); setCheatActive(false); setAiHint(null);
-    getSocket().emit("reset_game", { roomId, firstPiece });
+    getSocket().emit("reset_game", { roomId, requestPiece: myPiece, firstPiece });
   }
 
   function handleSetTime(seconds: number) {
@@ -217,7 +277,6 @@ export default function GamePage() {
             ← Sảnh
           </button>
 
-          {/* Only show room key badge in multiplayer */}
           {!isVsAI && (
             <div className="room-key-badge">
               <span className="badge-label">KEY</span>
@@ -275,10 +334,6 @@ export default function GamePage() {
               <button className={`cheat-btn ${cheatActive ? "active" : ""}`} onClick={handleCheat}>
                 ⚡ CHEAT
               </button>
-            )}
-
-            {room.status === "finished" && !amLoser && (
-              <button className="btn-reset" onClick={() => handleReset()}>↺ Lại</button>
             )}
           </div>
         </div>
@@ -351,6 +406,9 @@ export default function GamePage() {
           myName={myName}
           currentSkin={activeSkin}
           isLoser={amLoser}
+          isVsAI={isVsAI}
+          loserPiece={room.lastLoser as 0 | 1 | 2}
+          players={room.players}
           onPlayAgain={handleReset}
           onClose={() => setShowPostGame(false)}
         />
