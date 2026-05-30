@@ -83,7 +83,7 @@ export function setTurnTime(roomId: string, seconds: number): GameRoom | null {
   if (!room) return null; room.turnTime = clampT(seconds); return room;
 }
 
-// ── checkWin: scan 4 directions from last move ─────────────────────────────────
+// ── checkWin: scan 4 directions from last placed piece ────────────────────────
 export function checkWin(
   board: CellValue[][], row: number, col: number,
   piece: CellValue, boardSize: number, winCount: number
@@ -99,184 +99,140 @@ export function checkWin(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  AI ENGINE V3 — Professional Minimax + Alpha-Beta
-//  Strict scoring rules (user spec):
-//    Win           =  +1,000,000  (terminate search)
-//    Opp 4-ready   =  -1,000,000  (must block)
-//    Open Four     =  +10,000     (_XXXX_)
-//    Blocked Four  =  +1,000      (OXXXX_ or _XXXXO)
-//    Both-blocked  =  0           (OXXXXO — CRITICAL: NEVER waste move)
-//    Open Three    =  +1,000      (_XXX_)
-//    Fork 4-4      =  +10,000
-//    Fork 3-4      =  +9,000
-//    Fork 3-3      =  +8,000
+//  AI ENGINE V4 — Pattern Dictionary + Minimax + Alpha-Beta
+//
+//  Phase 1: Dynamic sizing — ROWS = board.length, COLS = board[0].length
+//  Phase 2: Waterfall pre-filter — Win → Block → Minimax (fixes Priority Inversion)
+//  Phase 3: Exhaustive pattern dictionary (string matching, no double-count)
+//  Phase 4: Fork detection — 4-4=5M, 4-3=2.5M, 3-3=1M
+//  Phase 5: Minimax depth 4+ with Alpha-Beta pruning
 // ══════════════════════════════════════════════════════════════════════════════
 
-const AI_WIN  =  1_000_000;
-const AI_LOSE = -1_000_000;
-const DIRS4   = [[0,1],[1,0],[1,1],[1,-1]] as const;
+// ── Phase 3: Pattern dictionary ───────────────────────────────────────────────
+// X = active player's piece, O = opponent's piece, _ = empty
+// Patterns and their reverses are both included so direction of scan doesn't matter.
 
-// ── Dynamic search depth by board size ───────────────────────────────────────
-function searchDepth(bs: number): number {
-  if (bs <= 5)  return 6;
-  if (bs <= 10) return 5;
-  return 4;
+// Class 1 — "Step-to-Win" (filling one gap = immediate win): +1,000,000
+// CRITICAL ZERO: OXXXXO, OXXXO, OXX_XO NOT listed → they score 0 automatically
+const PAT_C1 = [
+  '_XXXX_',             // open four (2 ways to win)
+  'OXXXX_', '_XXXXO',   // blocked four, one end open (1 way)
+  'X_XXX',  'XXX_X',    // broken four, 3+gap+1
+  'XX_XX',              // broken four, 2+gap+2
+  'X_X_XX', 'XX_X_X',   // deep broken (2 gaps, 4 pieces) — creates immediate C1 next
+];
+
+// Class 2 — "Lethal Threats" (open/broken three → one move creates C1): +100,000
+const PAT_C2 = [
+  '_XXX_',              // open three
+  '_X_XX_', '_XX_X_',   // broken three (both ends open)
+];
+
+// Class 3 — "Aggressive Development" (two-piece threats): +10,000
+const PAT_C3 = [
+  '_XX_',               // open two
+  '_X_X_', 'X_X_X',    // broken two
+];
+
+const SC_C1    = 1_000_000;
+const SC_C2    = 100_000;
+const SC_C3    = 10_000;
+const FORK_44  = 5_000_000;   // Phase 4: 4-4 fork (two C1 threats, unstoppable)
+const FORK_43  = 2_500_000;   // Phase 4: 4-3 fork
+const FORK_33  = 1_000_000;   // Phase 4: 3-3 fork
+const AI_WIN   = 100_000_000;
+const AI_LOSE  = -100_000_000;
+
+// Directions: (0,1)=horizontal, (1,0)=vertical, (1,1)=diag↘, (-1,1)=anti-diag↗
+const DIRS4 = [[0,1],[1,0],[1,1],[-1,1]] as const;
+
+// ── lineStr: convert cell array to pattern string for one player ─────────────
+// me→'X', opp→'O', empty→'_'
+function lineStr(cells: CellValue[], me: CellValue, opp: CellValue): string {
+  let s = '';
+  for (const v of cells) s += v === me ? 'X' : v === opp ? 'O' : '_';
+  return s;
 }
 
-// ── Line evaluation: scan an array of cells for consecutive patterns ──────────
-// Returns { score, open4, open3, blocked4 }
-// CRITICAL: blocks=2 (both ends blocked) → score=0, completely useless
-function evalLine(cells: CellValue[], piece: CellValue, opp: CellValue, wc: number): {
-  score: number; open4: number; open3: number; blocked4: number; isWin: boolean;
-} {
-  const n = cells.length;
-  let score = 0, open4 = 0, open3 = 0, blocked4 = 0;
-  let i = 0;
-  while (i < n) {
-    if (cells[i] !== piece) { i++; continue; }
-    const start = i;
-    while (i < n && cells[i] === piece) i++;
-    const count = i - start;
+// ── countOcc: count all (possibly overlapping) occurrences of pat in str ─────
+function countOcc(str: string, pat: string): number {
+  let n = 0, pos = -1;
+  while ((pos = str.indexOf(pat, pos + 1)) !== -1) n++;
+  return n;
+}
 
-    // Check what lies immediately OUTSIDE the run (determines open/blocked)
-    const leftBlocked  = (start === 0)  || cells[start - 1] === opp;
-    const rightBlocked = (i    >= n)    || cells[i]         === opp;
-    const blocks = (leftBlocked ? 1 : 0) + (rightBlocked ? 1 : 0);
+// ── scoreStr: apply pattern dictionary to a line string ───────────────────────
+// Returns score + c1/c2 counts (used for fork detection per direction)
+// CRITICAL: does NOT double-count because C1 patterns have 4 X's, C2 have 3 X's,
+//           C3 have 2 X's — a 4-X pattern cannot be a substring of a 3-X pattern.
+interface StrResult { score: number; c1: number; c2: number; isWin: boolean; }
+function scoreStr(str: string): StrResult {
+  // Win check first (5 in a row)
+  if (str.indexOf('XXXXX') !== -1) return { score: AI_WIN, c1: 999, c2: 0, isWin: true };
 
-    if (count >= wc) return { score: AI_WIN, open4, open3, blocked4, isWin: true };
+  let score = 0, c1 = 0, c2 = 0;
 
-    // CRITICAL: both ends blocked → completely useless, score = 0 (OXXXXO)
-    if (blocks === 2) continue;
-
-    const isOpen = (blocks === 0);
-
-    if      (count === wc - 1) { if (isOpen) { score += 100_000; open4++;  } else { score += 10_000; blocked4++; } }
-    else if (count === wc - 2) { if (isOpen) { score +=  50_000; open3++;  } else   score +=    500; }
-    else if (count === wc - 3) { if (isOpen)   score +=     200; }
-    else if (count === 1)      { if (isOpen)   score +=      10; }
+  // Class 1 — Step-to-Win
+  for (const p of PAT_C1) {
+    const n = countOcc(str, p);
+    if (n > 0) { score += n * SC_C1; c1 += n; }
   }
-  return { score, open4, open3, blocked4, isWin: false };
-}
 
-// ── evalBrokenLine: window scan for non-consecutive "broken three" patterns ───
-// Detects _X_XX_ / _XX_X_ / _X_X_X_ — gaps inside a 5-cell span
-// These are just as dangerous as Open Three: filling the gap creates Open Four.
-//
-// Method: slide a wc-wide window across the line.
-//   mine === wc-2 pieces in window + no opponent + pieces are NON-consecutive
-//   → broken three. Score depends on what sits just outside the window edges.
-//
-// Open Broken Three (both flanks empty):  +50,000
-// Half-open Broken Three (one flank):       +1,000
-// Both flanks blocked:                          0  (useless)
-//
-// Consecutive patterns (e.g. plain _XXX_) are SKIPPED here — evalLine handles them.
-function evalBrokenLine(cells: CellValue[], piece: CellValue, opp: CellValue, wc: number): number {
-  if (wc < 5) return 0;  // broken-three concept only meaningful for wc ≥ 5
-  const n = cells.length;
-  let score = 0;
-
-  for (let i = 0; i <= n - wc; i++) {
-    let mine = 0, hasOpp = false, first = -1, last = -1;
-    for (let j = 0; j < wc; j++) {
-      const v = cells[i + j];
-      if (v === opp) { hasOpp = true; break; }
-      if (v === piece) { mine++; if (first === -1) first = j; last = j; }
-    }
-    if (hasOpp || mine !== wc - 2) continue;
-
-    // Skip if consecutive (last−first+1 === mine means no gaps)
-    if (last - first + 1 === mine) continue;
-
-    // Flanks immediately outside the window
-    const leftBlocked  = (i === 0)       || cells[i - 1]      === opp;
-    const rightBlocked = (i + wc >= n)   || cells[i + wc]     === opp;
-    if (leftBlocked && rightBlocked) continue;  // both blocked → useless
-
-    score += (!leftBlocked && !rightBlocked) ? 50_000 : 1_000;
+  // Class 2 — Lethal Threats
+  for (const p of PAT_C2) {
+    const n = countOcc(str, p);
+    if (n > 0) { score += n * SC_C2; c2 += n; }
   }
-  return score;
+
+  // Class 3 — Aggressive Development
+  for (const p of PAT_C3) {
+    score += countOcc(str, p) * SC_C3;
+  }
+
+  return { score, c1, c2, isWin: false };
 }
 
-// ── Extract all scannable lines from board (rows, cols, diagonals) ────────────
-// Supports any N×M board — NO hardcoded size
-function extractLines(board: CellValue[][], rows: number, cols: number, wc: number): CellValue[][] {
-  const lines: CellValue[][] = [];
+// ── Phase 1: Extract all lines (no hardcoding — uses ROWS/COLS dynamically) ──
+// Returns each line tagged with a direction index (0-3) for fork detection.
+function extractAllLines(board: CellValue[][], rows: number, cols: number, wc: number): { cells: CellValue[]; dir: number }[] {
+  const out: { cells: CellValue[]; dir: number }[] = [];
 
-  // Horizontal rows
+  // Horizontal — dir 0
   for (let r = 0; r < rows; r++) {
-    if (cols >= wc) lines.push(board[r].slice() as CellValue[]);
+    if (cols >= wc) out.push({ cells: board[r].slice() as CellValue[], dir: 0 });
   }
 
-  // Vertical columns
+  // Vertical — dir 1
   for (let c = 0; c < cols; c++) {
-    if (rows >= wc) { const col: CellValue[] = []; for (let r = 0; r < rows; r++) col.push(board[r][c]); lines.push(col); }
+    if (rows >= wc) {
+      const cells: CellValue[] = [];
+      for (let r = 0; r < rows; r++) cells.push(board[r][c]);
+      out.push({ cells, dir: 1 });
+    }
   }
 
-  // Diagonal ↘ (top-left to bottom-right) — d = startRow - startCol offset
+  // Diagonal ↘ (dr=1, dc=1) — dir 2
   for (let d = -(cols - 1); d <= rows - 1; d++) {
-    const diag: CellValue[] = [];
+    const cells: CellValue[] = [];
     const r0 = Math.max(0, -d), c0 = Math.max(0, d);
-    for (let s = 0; r0 + s < rows && c0 + s < cols; s++) diag.push(board[r0 + s][c0 + s]);
-    if (diag.length >= wc) lines.push(diag);
+    for (let s = 0; r0 + s < rows && c0 + s < cols; s++) cells.push(board[r0 + s][c0 + s]);
+    if (cells.length >= wc) out.push({ cells, dir: 2 });
   }
 
-  // Anti-diagonal ↙ (top-right to bottom-left) — d = startRow + startCol
+  // Anti-diagonal ↙ (dr=1, dc=-1) — dir 3
   for (let d = 0; d <= rows + cols - 2; d++) {
-    const anti: CellValue[] = [];
+    const cells: CellValue[] = [];
     const r0 = Math.max(0, d - cols + 1), c0 = Math.min(d, cols - 1);
-    for (let s = 0; r0 + s < rows && c0 - s >= 0; s++) anti.push(board[r0 + s][c0 - s]);
-    if (anti.length >= wc) lines.push(anti);
+    for (let s = 0; r0 + s < rows && c0 - s >= 0; s++) cells.push(board[r0 + s][c0 - s]);
+    if (cells.length >= wc) out.push({ cells, dir: 3 });
   }
 
-  return lines;
+  return out;
 }
 
-// ── Full board static evaluation ──────────────────────────────────────────────
-// Scans ALL lines, applies strict scoring + fork detection
-function evalBoard(
-  board: CellValue[][], me: CellValue, opp: CellValue,
-  rows: number, cols: number, wc: number
-): number {
-  const lines = extractLines(board, rows, cols, wc);
-  let myScore = 0, oppScore = 0;
-  let myOpen4 = 0, myOpen3 = 0, myBlocked4 = 0;
-  let oppOpen4 = 0, oppBlocked4 = 0;
-
-  for (const line of lines) {
-    const my = evalLine(line, me,  opp, wc);
-    const op = evalLine(line, opp, me,  wc);
-    if (my.isWin) return  AI_WIN;   // AI wins → terminal
-    if (op.isWin) return  AI_LOSE;  // Opponent wins → terminal
-
-    // Consecutive pattern scores
-    myScore  += my.score;
-    oppScore += op.score;
-    myOpen4  += my.open4;   myOpen3  += my.open3;   myBlocked4  += my.blocked4;
-    oppOpen4 += op.open4;   oppBlocked4 += op.blocked4;
-
-    // Broken-three scores (treated identically to Open Three at +50,000)
-    // Both my broken threes (attack) and opponent's (defense penalty ×1.2)
-    myScore  += evalBrokenLine(line, me,  opp, wc);
-    oppScore += evalBrokenLine(line, opp, me,  wc);
-  }
-
-  // Opponent has 4 ready to win → -1,000,000 (must block immediately)
-  // Covers open four (_OOOO_) AND blocked four (XOOOO_) — both are win-in-one
-  if (oppOpen4 + oppBlocked4 > 0) return AI_LOSE;
-
-  // Fork bonus: flat +8,000 for any multi-threat situation
-  // Kept deliberately BELOW the Open/Broken Three penalty (50k) so blocking
-  // the opponent's three always outweighs building a fork
-  const hasMultiThreat = myOpen4 >= 2 || (myOpen4 >= 1 && myOpen3 >= 1) || myOpen3 >= 2;
-  const fork = hasMultiThreat ? 8_000 : 0;
-
-  return myScore + fork - oppScore * 1.2;
-}
-
-// ── Candidate cells: empty cells within radius 2 (spec) of any piece ─────────
+// ── Phase 1: Proximity filter — only cells within radius 2 of any piece ──────
 function getCandidates(board: CellValue[][], rows: number, cols: number, radius = 2): [number, number][] {
-  const set = new Set<number>();
+  const seen = new Set<number>();
   const cands: [number, number][] = [];
   let any = false;
   for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
@@ -284,75 +240,131 @@ function getCandidates(board: CellValue[][], rows: number, cols: number, radius 
     any = true;
     for (let dr = -radius; dr <= radius; dr++) for (let dc = -radius; dc <= radius; dc++) {
       const nr = r+dr, nc = c+dc, k = nr*64+nc;
-      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !board[nr][nc] && !set.has(k)) { set.add(k); cands.push([nr,nc]); }
+      if (nr>=0&&nr<rows&&nc>=0&&nc<cols&&!board[nr][nc]&&!seen.has(k)) { seen.add(k); cands.push([nr,nc]); }
     }
   }
-  return any ? cands : [[rows >> 1, cols >> 1]];
+  return any ? cands : [[rows>>1, cols>>1]];
 }
 
-// ── Cheap move scorer for minimax candidate ordering ────────────────────────
-// Counts adjacent same/opp pieces from (r,c) in all directions
-// O(4 * radius) — much cheaper than full evalBoard
+// ── Build the full line through point (r,c) along direction (dr,dc) ───────────
+function lineThrough(board: CellValue[][], r: number, c: number, dr: number, dc: number, rows: number, cols: number): CellValue[] {
+  // Walk backward to find start of line
+  let sr = r, sc = c;
+  for (;;) {
+    const nr = sr - dr, nc = sc - dc;
+    if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) break;
+    sr = nr; sc = nc;
+  }
+  // Walk forward, collecting cells
+  const cells: CellValue[] = [];
+  for (let cr = sr, cc = sc; cr >= 0 && cr < rows && cc >= 0 && cc < cols; cr += dr, cc += dc) {
+    cells.push(board[cr][cc]);
+  }
+  return cells;
+}
+
+// ── Phase 3+4: Full board evaluation ─────────────────────────────────────────
+// Extracts all lines, scores them with pattern matching, then applies fork bonuses.
+// Fork bonus uses direction-categorized C1/C2 counts to detect multi-line threats.
+function evalBoard(board: CellValue[][], me: CellValue, opp: CellValue, rows: number, cols: number, wc: number): number {
+  let myScore = 0, oppScore = 0;
+  // Track per-direction C1/C2 presence (4 direction types)
+  const myC1d  = [0, 0, 0, 0];
+  const myC2d  = [0, 0, 0, 0];
+  const oppC1d = [0, 0, 0, 0];
+  const oppC2d = [0, 0, 0, 0];
+
+  for (const { cells, dir } of extractAllLines(board, rows, cols, wc)) {
+    const my = scoreStr(lineStr(cells, me, opp));
+    if (my.isWin) return AI_WIN;
+    const op = scoreStr(lineStr(cells, opp, me));
+    if (op.isWin) return AI_LOSE;
+
+    myScore  += my.score;
+    oppScore += op.score;
+
+    // Accumulate per-direction threat presence (for fork detection)
+    if (my.c1 > 0) myC1d[dir]++;
+    if (my.c2 > 0) myC2d[dir]++;
+    if (op.c1 > 0) oppC1d[dir]++;
+    if (op.c2 > 0) oppC2d[dir]++;
+  }
+
+  // Phase 4: Fork bonus — count DISTINCT direction types carrying each threat class
+  // A 4-4 fork means C1 threats exist in 2+ different directions → unstoppable
+  const myDC1  = myC1d.reduce((a, n) => a + (n > 0 ? 1 : 0), 0);
+  const myDC2  = myC2d.reduce((a, n) => a + (n > 0 ? 1 : 0), 0);
+  const oppDC1 = oppC1d.reduce((a, n) => a + (n > 0 ? 1 : 0), 0);
+  const oppDC2 = oppC2d.reduce((a, n) => a + (n > 0 ? 1 : 0), 0);
+
+  let myFork = 0;
+  if      (myDC1 >= 2)               myFork = FORK_44;
+  else if (myDC1 >= 1 && myDC2 >= 1) myFork = FORK_43;
+  else if (myDC2 >= 2)               myFork = FORK_33;
+
+  let oppFork = 0;
+  if      (oppDC1 >= 2)                oppFork = FORK_44;
+  else if (oppDC1 >= 1 && oppDC2 >= 1) oppFork = FORK_43;
+  else if (oppDC2 >= 2)                oppFork = FORK_33;
+
+  return (myScore + myFork) - (oppScore + oppFork);
+}
+
+// ── Fast candidate scorer for move ordering (4 directions through the cell) ──
+// Much cheaper than full evalBoard; used to sort candidates before deep search.
 function quickScore(board: CellValue[][], r: number, c: number, me: CellValue, opp: CellValue, rows: number, cols: number, wc: number): number {
-  let score = 0;
+  let myS = 0, oppS = 0;
+  board[r][c] = me;
   for (const [dr, dc] of DIRS4) {
-    let mine = 0, theirs = 0;
-    for (let i = 1; i < wc; i++) {
-      const nr = r+dr*i, nc = c+dc*i;
-      if (nr<0||nr>=rows||nc<0||nc>=cols) break;
-      if (board[nr][nc] === me) mine++; else if (board[nr][nc] === opp) { theirs++; break; } else break;
-    }
-    for (let i = 1; i < wc; i++) {
-      const nr = r-dr*i, nc = c-dc*i;
-      if (nr<0||nr>=rows||nc<0||nc>=cols) break;
-      if (board[nr][nc] === me) mine++; else if (board[nr][nc] === opp) { theirs++; break; } else break;
-    }
-    // Reward building own chain; reward blocking opponent chain slightly more
-    score += mine * 10 + theirs * 12;
+    const s = scoreStr(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), me, opp));
+    myS += s.isWin ? AI_WIN : s.score;
   }
-  return score;
+  board[r][c] = opp;
+  for (const [dr, dc] of DIRS4) {
+    const s = scoreStr(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), opp, me));
+    oppS += s.isWin ? AI_WIN : s.score;
+  }
+  board[r][c] = 0;
+  return myS - oppS;
 }
 
-// ── Minimax with Alpha-Beta pruning (depth 4–6 per board size) ────────────────
+// ── Phase 5: Minimax with Alpha-Beta pruning ──────────────────────────────────
 function minimax(
   board: CellValue[][], depth: number, alpha: number, beta: number,
   isMax: boolean, me: CellValue, opp: CellValue, rows: number, cols: number, wc: number
 ): number {
   if (depth === 0) return evalBoard(board, me, opp, rows, cols, wc);
 
-  // Candidate cells (radius 2) limited to 12 per node for performance
+  // Proximity candidates, limited to 12 per node (ordered by quickScore)
   const raw = getCandidates(board, rows, cols, 2);
-  if (!raw.length) return 0;
+  if (!raw.length) return evalBoard(board, me, opp, rows, cols, wc);
 
-  // Cheap ordering: sort by quickScore so best moves are tried first → better pruning
   const cr = rows >> 1, cc = cols >> 1;
-  const cands = raw
-    .map(([r, c]) => {
-      const qs = quickScore(board, r, c, me, opp, rows, cols, wc);
-      const dist = Math.abs(r - cr) + Math.abs(c - cc);
-      return { r, c, s: qs - dist };
-    })
+  const current = isMax ? me : opp;
+
+  // Cheap ordering: use quickScore for alpha-beta efficiency
+  const ordered = raw
+    .map(([r, c]) => ({ r, c, s: quickScore(board, r, c, me, opp, rows, cols, wc) - (Math.abs(r-cr)+Math.abs(c-cc))*5 }))
     .sort((a, b) => isMax ? b.s - a.s : a.s - b.s)
     .slice(0, 12);
 
   if (isMax) {
     let best = -Infinity;
-    for (const { r, c } of cands) {
+    for (const { r, c } of ordered) {
       board[r][c] = me;
-      // Terminal check (fast): did I just win?
-      if (checkWin(board, r, c, me, rows, wc)) { board[r][c] = 0; return AI_WIN * 10 + depth; }
+      if (checkWin(board, r, c, me, rows, wc)) { board[r][c] = 0; return AI_WIN + depth; }
       const val = minimax(board, depth - 1, alpha, beta, false, me, opp, rows, cols, wc);
       board[r][c] = 0;
       if (val > best) best = val;
       if (best > alpha) alpha = best;
-      if (beta <= alpha) break; // α-β cutoff
+      if (beta <= alpha) break;
     }
     return best;
   } else {
     let best = Infinity;
-    for (const { r, c } of cands) {
+    for (const { r, c } of ordered) {
       board[r][c] = opp;
-      if (checkWin(board, r, c, opp, rows, wc)) { board[r][c] = 0; return AI_LOSE * 10 - depth; }
+      if (checkWin(board, r, c, opp, rows, wc)) { board[r][c] = 0; return AI_LOSE - depth; }
       const val = minimax(board, depth - 1, alpha, beta, true, me, opp, rows, cols, wc);
       board[r][c] = 0;
       if (val < best) best = val;
@@ -363,18 +375,89 @@ function minimax(
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  EASY / MEDIUM AI (lightweight, no deep minimax)
-// ══════════════════════════════════════════════════════════════════════════════
+// ── Search depth based on board size ──────────────────────────────────────────
+function searchDepth(bs: number): number {
+  if (bs <= 5) return 6;
+  if (bs <= 10) return 5;
+  return 4;
+}
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  HARD AI: Phase 2 Waterfall → Phase 3-5 Strategic Engine
+// ══════════════════════════════════════════════════════════════════════════════
+export function getAIMove(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
+  const opp: CellValue = me === 1 ? 2 : 1;
+  // Phase 1: Dynamic sizing — NEVER hardcoded
+  const rows = board.length;
+  const cols = board[0]?.length ?? bs;
+  const cr = rows >> 1, cc = cols >> 1;
+
+  // First move → center
+  const cands = getCandidates(board, rows, cols, 2);
+  if (cands.length <= 1) return [cr, cc];
+
+  // ── Phase 2: Strict priority waterfall ──────────────────────────────────────
+  // Priority 1: Can AI win immediately? Check BEFORE anything else.
+  for (const [r, c] of cands) {
+    board[r][c] = me;
+    const win = checkWin(board, r, c, me, rows, wc);
+    board[r][c] = 0;
+    if (win) return [r, c];   // WIN IMMEDIATELY — absolute priority
+  }
+
+  // Priority 2: Must AI block opponent's immediate win?
+  for (const [r, c] of cands) {
+    board[r][c] = opp;
+    const win = checkWin(board, r, c, opp, rows, wc);
+    board[r][c] = 0;
+    if (win) return [r, c];   // BLOCK IMMEDIATELY — second priority
+  }
+
+  // Priority 3: Strategic engine (Minimax)
+  // Pre-score all candidates with quickScore (4-direction pattern scan)
+  // to order them before deep search — critical for alpha-beta efficiency.
+  const depth = searchDepth(bs);
+
+  const prescored = cands
+    .map(([r, c]) => ({
+      rc: [r, c] as [number, number],
+      s: quickScore(board, r, c, me, opp, rows, cols, wc) - (Math.abs(r-cr)+Math.abs(c-cc)) * 3,
+    }))
+    .sort((a, b) => b.s - a.s);
+
+  // Early exit: if top candidate creates an unstoppable fork (C1 threat),
+  // return it without spending time on deep minimax.
+  const topS = prescored[0]?.s ?? 0;
+  if (topS >= SC_C1 * 2) return prescored[0].rc;   // double C1 → fork → instant pick
+
+  // Deep minimax on top 18 candidates
+  const top = prescored.slice(0, 18);
+  let bestMove: [number, number] = top[0].rc;
+  let bestVal = -Infinity;
+  let alpha = -Infinity, beta = Infinity;
+
+  for (const { rc: [r, c] } of top) {
+    board[r][c] = me;
+    const val = minimax(board, depth - 1, alpha, beta, false, me, opp, rows, cols, wc);
+    board[r][c] = 0;
+    if (val > bestVal) { bestVal = val; bestMove = [r, c]; }
+    if (val > alpha) alpha = val;
+    if (bestVal >= AI_WIN) break;   // found a winning line → stop
+  }
+
+  return bestMove;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  EASY / MEDIUM AI (lightweight — no deep search)
+// ══════════════════════════════════════════════════════════════════════════════
 function getAIMoveEasy(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
   const opp: CellValue = me === 1 ? 2 : 1;
   const rows = board.length, cols = board[0]?.length ?? bs;
   const cands = getCandidates(board, rows, cols, 2);
-  // Block/win only, otherwise random
   for (const [r,c] of cands) { board[r][c]=me; const w=checkWin(board,r,c,me,rows,wc); board[r][c]=0; if(w) return [r,c]; }
   for (const [r,c] of cands) { board[r][c]=opp; const w=checkWin(board,r,c,opp,rows,wc); board[r][c]=0; if(w) return [r,c]; }
-  return cands.sort(() => Math.random() - 0.5)[0] ?? [rows>>1, cols>>1];
+  return cands.sort(()=>Math.random()-.5)[0] ?? [rows>>1, cols>>1];
 }
 
 function getAIMoveMedium(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
@@ -384,81 +467,16 @@ function getAIMoveMedium(board: CellValue[][], me: 1|2, bs: number, wc: number):
   for (const [r,c] of cands) { board[r][c]=me; const w=checkWin(board,r,c,me,rows,wc); board[r][c]=0; if(w) return [r,c]; }
   for (const [r,c] of cands) { board[r][c]=opp; const w=checkWin(board,r,c,opp,rows,wc); board[r][c]=0; if(w) return [r,c]; }
   const cr=rows>>1, cc=cols>>1;
-  let best=cands[0], bestScore=-Infinity;
-  for (const [r,c] of cands.slice(0,28)) {
-    board[r][c]=me; const atk=evalBoard(board,me,opp,rows,cols,wc); board[r][c]=0;
-    board[r][c]=opp; const def=evalBoard(board,me,opp,rows,cols,wc); board[r][c]=0;
-    const s = atk - def*0.9 - (Math.abs(r-cr)+Math.abs(c-cc))*0.5 + Math.random()*200;
-    if (s > bestScore) { bestScore=s; best=[r,c]; }
+  let best=cands[0], bestS=-Infinity;
+  for (const [r,c] of cands.slice(0, 30)) {
+    const s = quickScore(board, r, c, me, opp, rows, cols, wc)
+            - (Math.abs(r-cr)+Math.abs(c-cc))
+            + Math.random()*SC_C3;
+    if (s > bestS) { bestS=s; best=[r,c]; }
   }
   return best;
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  HARD (CHEAT) AI — Full Minimax + Strict Spec Scoring
-//  Supports any N×M board via board.length / board[0].length
-// ══════════════════════════════════════════════════════════════════════════════
-export function getAIMove(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
-  const opp: CellValue = me === 1 ? 2 : 1;
-  // Dynamic board dimensions — NO hardcoding
-  const rows = board.length;
-  const cols = board[0]?.length ?? bs;
-  const cr = rows >> 1, cc = cols >> 1;
-
-  // First move: go to center
-  const allCands = getCandidates(board, rows, cols, 2);
-  if (allCands.length <= 1) return [cr, cc];
-
-  const depth = searchDepth(bs);
-
-  // Step 1: quick-score all candidates with evalBoard (1-ply)
-  // This identifies immediate wins, blocks, and fork setups before deep search
-  const prescored: [[number, number], number][] = [];
-  for (const [r, c] of allCands) {
-    // Immediate win?
-    board[r][c] = me;
-    if (checkWin(board, r, c, me, rows, wc)) { board[r][c] = 0; return [r, c]; }
-    const atkScore = evalBoard(board, me, opp, rows, cols, wc);
-    board[r][c] = 0;
-
-    // Opponent win → must block
-    board[r][c] = opp;
-    if (checkWin(board, r, c, opp, rows, wc)) { board[r][c] = 0; return [r, c]; } // block immediately
-    const defScore = evalBoard(board, me, opp, rows, cols, wc);
-    board[r][c] = 0;
-
-    const dist = Math.abs(r - cr) + Math.abs(c - cc);
-    // Combined: attack + defense (defensive bias per spec) + center proximity
-    const score = atkScore - defScore * 1.2 - dist;
-    prescored.push([[r, c], score]);
-  }
-
-  // Sort and take top 18 candidates for deep minimax
-  prescored.sort((a, b) => b[1] - a[1]);
-  const top = prescored.slice(0, 18);
-
-  // If top candidate is an emergency block (opponent has 4) return it immediately
-  if (prescored[0][1] <= AI_LOSE * 0.5) return prescored[0][0];
-
-  // Step 2: deep minimax on top candidates
-  let bestMove: [number, number] = top[0][0];
-  let bestVal = -Infinity;
-  let alpha = -Infinity, beta = Infinity;
-
-  for (const [[r, c], _] of top) {
-    board[r][c] = me;
-    const val = minimax(board, depth - 1, alpha, beta, false, me, opp, rows, cols, wc);
-    board[r][c] = 0;
-    if (val > bestVal) { bestVal = val; bestMove = [r, c]; }
-    if (val > alpha) alpha = val;
-    // Top-level pruning: if found a win, stop searching
-    if (bestVal >= AI_WIN) break;
-  }
-
-  return bestMove;
-}
-
-// ── Route by difficulty ───────────────────────────────────────────────────────
 export function getAIMoveByDifficulty(board: CellValue[][], piece: 1|2, bs: number, wc: number, diff: AIDifficulty): [number, number] {
   switch (diff) {
     case "easy":   return getAIMoveEasy(board, piece, bs, wc);
