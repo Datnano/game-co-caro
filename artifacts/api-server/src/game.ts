@@ -414,10 +414,84 @@ export function getAIMove(board: CellValue[][], me: 1 | 2, bs: number, wc: numbe
   const cols = board[0]?.length ?? bs;
   const cr = rows >> 1, cc = cols >> 1;
 
-  const cands = getCandidates(board, rows, cols, 2);
-  if (cands.length <= 1) return [cr, cc];  // first move → center
+  // ══════════════════════════════════════════════════════════════════════════
+  //  PHASE 0: Opening Book — "Hua Yue / Flower Moon" (花月)
+  //  Fires ONLY for the first 2 moves of the AI; bypasses all search.
+  // ══════════════════════════════════════════════════════════════════════════
+  {
+    // Count total pieces and locate the single opponent piece (if any)
+    let pieceCount = 0;
+    let oppR = -1, oppC = -1;
+    outer: for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (board[r][c] !== 0) {
+          pieceCount++;
+          if (board[r][c] === opp) { oppR = r; oppC = c; }
+          if (pieceCount > 2) break outer;  // no need to count further
+        }
+      }
+    }
 
-  // ── PHASE 2: Instant Win / Block pre-check (1-depth scan, no Minimax) ───────
+    // Rule 1: Empty board — AI plays first → exact center.
+    if (pieceCount === 0) return [cr, cc];
+
+    // Rule 2: AI plays second (1 piece on board) → diagonal defensive response.
+    // Prefer (op_r+1, op_c+1); fall back through other diagonals.
+    if (pieceCount === 1 && oppR !== -1) {
+      const diagonals: [number, number][] = [
+        [oppR + 1, oppC + 1],
+        [oppR + 1, oppC - 1],
+        [oppR - 1, oppC + 1],
+        [oppR - 1, oppC - 1],
+      ];
+      for (const [r, c] of diagonals) {
+        if (r >= 0 && r < rows && c >= 0 && c < cols && board[r][c] === 0) return [r, c];
+      }
+      return [cr, cc];  // extreme edge fallback
+    }
+
+    // Rule 3: AI plays first, 2nd stone (2 pieces on board) → Hua Yue L-shape.
+    // AI's first stone is at center. Opponent just placed at (oppR, oppC).
+    // We respond at an L-shaped offset to begin the Flower Moon formation.
+    if (pieceCount === 2 && oppR !== -1) {
+      const dr = Math.sign(oppR - cr) as -1 | 0 | 1;
+      const dc = Math.sign(oppC - cc) as -1 | 0 | 1;
+
+      // Response offset lookup (from center) for each of the 8 directions.
+      // Orthogonal: one step sideways from opponent (creates L-shape at center level).
+      // Diagonal:   extend two steps in the row-axis direction (classic Hua Yue arm).
+      const HUA_YUE: Record<string, [number, number][]> = {
+        '-1,0':  [[-1,  1], [-1, -1]],   // opp UP       → UP-RIGHT  or UP-LEFT
+        '1,0':   [[ 1,  1], [ 1, -1]],   // opp DOWN     → DOWN-RIGHT or DOWN-LEFT
+        '0,-1':  [[ 1, -1], [-1, -1]],   // opp LEFT     → DOWN-LEFT or UP-LEFT
+        '0,1':   [[ 1,  1], [-1,  1]],   // opp RIGHT    → DOWN-RIGHT or UP-RIGHT
+        '-1,1':  [[-2,  1], [ 0,  1]],   // opp UP-RIGHT → 2×UP-RIGHT or RIGHT
+        '-1,-1': [[-2, -1], [ 0, -1]],   // opp UP-LEFT  → 2×UP-LEFT  or LEFT
+        '1,1':   [[ 2,  1], [ 0,  1]],   // opp DN-RIGHT → 2×DN-RIGHT or RIGHT
+        '1,-1':  [[ 2, -1], [ 0, -1]],   // opp DN-LEFT  → 2×DN-LEFT  or LEFT
+      };
+
+      const offsets = HUA_YUE[`${dr},${dc}`];
+      if (offsets) {
+        for (const [ro, co] of offsets) {
+          const nr = cr + ro, nc = cc + co;
+          if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 0) return [nr, nc];
+        }
+      }
+      // Fallback: any adjacent empty cell near center if Hua Yue cell is taken
+      for (let ro = -1; ro <= 1; ro++) for (let co = -1; co <= 1; co++) {
+        if (ro === 0 && co === 0) continue;
+        const nr = cr + ro, nc = cc + co;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 0) return [nr, nc];
+      }
+    }
+  }
+  // Opening Book exhausted (3+ pieces on board) — fall through to search.
+
+  const cands = getCandidates(board, rows, cols, 2);
+  if (cands.length <= 1) return [cr, cc];
+
+  // ── PHASE 1: Instant Win / Block pre-check (1-depth scan, no Minimax) ───────
   // Priority 1: Can AI win immediately?
   for (const [r, c] of cands) {
     board[r][c] = me;
