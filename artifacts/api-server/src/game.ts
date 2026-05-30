@@ -145,17 +145,57 @@ function evalLine(cells: CellValue[], piece: CellValue, opp: CellValue, wc: numb
 
     if (count >= wc) return { score: AI_WIN, open4, open3, blocked4, isWin: true };
 
-    // CRITICAL FIX: both ends blocked → completely useless, score = 0
+    // CRITICAL: both ends blocked → completely useless, score = 0 (OXXXXO)
     if (blocks === 2) continue;
 
     const isOpen = (blocks === 0);
 
-    if      (count === wc - 1) { if (isOpen) { score += 10_000; open4++;   } else { score += 1_000; blocked4++; } }
-    else if (count === wc - 2) { if (isOpen) { score +=  1_000; open3++;   } else   score +=   100; }
-    else if (count === wc - 3) { if (isOpen)   score +=     50; }
-    else if (count === 1)      { if (isOpen)   score +=     10; }
+    if      (count === wc - 1) { if (isOpen) { score += 100_000; open4++;  } else { score += 10_000; blocked4++; } }
+    else if (count === wc - 2) { if (isOpen) { score +=  50_000; open3++;  } else   score +=    500; }
+    else if (count === wc - 3) { if (isOpen)   score +=     200; }
+    else if (count === 1)      { if (isOpen)   score +=      10; }
   }
   return { score, open4, open3, blocked4, isWin: false };
+}
+
+// ── evalBrokenLine: window scan for non-consecutive "broken three" patterns ───
+// Detects _X_XX_ / _XX_X_ / _X_X_X_ — gaps inside a 5-cell span
+// These are just as dangerous as Open Three: filling the gap creates Open Four.
+//
+// Method: slide a wc-wide window across the line.
+//   mine === wc-2 pieces in window + no opponent + pieces are NON-consecutive
+//   → broken three. Score depends on what sits just outside the window edges.
+//
+// Open Broken Three (both flanks empty):  +50,000
+// Half-open Broken Three (one flank):       +1,000
+// Both flanks blocked:                          0  (useless)
+//
+// Consecutive patterns (e.g. plain _XXX_) are SKIPPED here — evalLine handles them.
+function evalBrokenLine(cells: CellValue[], piece: CellValue, opp: CellValue, wc: number): number {
+  if (wc < 5) return 0;  // broken-three concept only meaningful for wc ≥ 5
+  const n = cells.length;
+  let score = 0;
+
+  for (let i = 0; i <= n - wc; i++) {
+    let mine = 0, hasOpp = false, first = -1, last = -1;
+    for (let j = 0; j < wc; j++) {
+      const v = cells[i + j];
+      if (v === opp) { hasOpp = true; break; }
+      if (v === piece) { mine++; if (first === -1) first = j; last = j; }
+    }
+    if (hasOpp || mine !== wc - 2) continue;
+
+    // Skip if consecutive (last−first+1 === mine means no gaps)
+    if (last - first + 1 === mine) continue;
+
+    // Flanks immediately outside the window
+    const leftBlocked  = (i === 0)       || cells[i - 1]      === opp;
+    const rightBlocked = (i + wc >= n)   || cells[i + wc]     === opp;
+    if (leftBlocked && rightBlocked) continue;  // both blocked → useless
+
+    score += (!leftBlocked && !rightBlocked) ? 50_000 : 1_000;
+  }
+  return score;
 }
 
 // ── Extract all scannable lines from board (rows, cols, diagonals) ────────────
@@ -209,20 +249,27 @@ function evalBoard(
     if (my.isWin) return  AI_WIN;   // AI wins → terminal
     if (op.isWin) return  AI_LOSE;  // Opponent wins → terminal
 
-    myScore += my.score; oppScore += op.score;
-    myOpen4  += my.open4;  myOpen3   += my.open3;  myBlocked4  += my.blocked4;
-    oppOpen4 += op.open4;  oppBlocked4 += op.blocked4;
+    // Consecutive pattern scores
+    myScore  += my.score;
+    oppScore += op.score;
+    myOpen4  += my.open4;   myOpen3  += my.open3;   myBlocked4  += my.blocked4;
+    oppOpen4 += op.open4;   oppBlocked4 += op.blocked4;
+
+    // Broken-three scores (treated identically to Open Three at +50,000)
+    // Both my broken threes (attack) and opponent's (defense penalty ×1.2)
+    myScore  += evalBrokenLine(line, me,  opp, wc);
+    oppScore += evalBrokenLine(line, opp, me,  wc);
   }
 
-  // Spec: opponent has 4 ready to win → -1,000,000 (must block)
-  // This covers both _OOOO_ (open4) and XOOOO_ (blocked4 with one open end)
+  // Opponent has 4 ready to win → -1,000,000 (must block immediately)
+  // Covers open four (_OOOO_) AND blocked four (XOOOO_) — both are win-in-one
   if (oppOpen4 + oppBlocked4 > 0) return AI_LOSE;
 
-  // Fork bonuses (from AI's perspective)
-  let fork = 0;
-  if      (myOpen4 >= 2)                     fork = 10_000;  // 4-4: opponent can't block both
-  else if (myOpen4 >= 1 && myOpen3 >= 1)     fork =  9_000;  // 3-4: strong fork
-  else if (myOpen3 >= 2)                     fork =  8_000;  // 3-3: double open three
+  // Fork bonus: flat +8,000 for any multi-threat situation
+  // Kept deliberately BELOW the Open/Broken Three penalty (50k) so blocking
+  // the opponent's three always outweighs building a fork
+  const hasMultiThreat = myOpen4 >= 2 || (myOpen4 >= 1 && myOpen3 >= 1) || myOpen3 >= 2;
+  const fork = hasMultiThreat ? 8_000 : 0;
 
   return myScore + fork - oppScore * 1.2;
 }
