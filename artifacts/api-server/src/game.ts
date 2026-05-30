@@ -117,18 +117,21 @@ export function checkWin(
 //    FORK_33        +8,000      — 3-3 fork bonus
 // ══════════════════════════════════════════════════════════════════════════════
 
-const V_WIN      =  1_000_000;
-const V_LOSE     = -1_000_000;
-const V_OPEN4    =    100_000;
-const V_BLOCK4   =      1_000;
-const V_BROKEN4  =      1_000;
-const V_OPP4     = -1_000_000;
-const V_OPEN3    =     50_000;
-const V_BROKEN3  =     50_000;
-const V_OPP3     =    -50_000;
-const V_FORK44   =     10_000;
-const V_FORK34   =      9_000;
-const V_FORK33   =      8_000;
+const V_WIN      =  1_000_000;   // 5-in-a-row → terminal
+const V_LOSE     = -1_000_000;   // opponent 5-in-a-row → terminal
+const V_OPEN4    =    100_000;   // _XXXX_
+const V_BLOCK4   =      5_000;   // OXXXX_ / _XXXXO (one open end)
+const V_BROKEN4  =     20_000;   // X_XXX / XXX_X / XX_XX (gap in 4-run)
+const V_OPP4     = -1_000_000;   // opponent any 4-threat → must block
+const V_OPEN3    =     50_000;   // _XXX_
+const V_BROKEN3  =     40_000;   // _X_XX_ / _XX_X_ (both ends open)
+const V_DBL_GAP3 =     25_000;   // X_X_X (double-gap hidden trap)
+const V_HALF3    =     15_000;   // _X_XX / XX_X_ (one end open broken 3)
+const V_OPP3     =    -50_000;   // opponent open/broken three
+// Fork bonuses — GREATLY increased so AI actively hunts double-threats
+const V_FORK44   =    200_000;   // 4-4 fork: essentially forced win
+const V_FORK34   =     80_000;   // 3-4 fork: very dangerous
+const V_FORK33   =     60_000;   // 3-3 fork: forces two-block dilemma
 
 // Directions: horizontal, vertical, diagonal ↘, anti-diagonal ↗
 const DIRS4 = [[0,1],[1,0],[1,1],[-1,1]] as const;
@@ -147,64 +150,91 @@ function countOcc(str: string, pat: string): number {
   return n;
 }
 
+// ── hasViableWindow: dead-line guard ─────────────────────────────────────────
+// Returns true if `str` contains at least one uninterrupted run of `wc` cells
+// that contain no 'O'. If false → the line is a dead line (wall-blocked or
+// fully surrounded), can never produce a win, score it as 0 immediately.
+function hasViableWindow(str: string, wc: number): boolean {
+  let run = 0;
+  for (const ch of str) {
+    if (ch === 'O') { run = 0; }
+    else if (++run >= wc) return true;
+  }
+  return false;
+}
+
 // ── scoreLine: evaluate one line string from AI's perspective ─────────────────
+// wc = win condition (pieces needed to win). Defaults to 5.
 // Returns the score, and flags indicating presence of 4-threats and 3-threats
 // (used by evalBoard for per-direction fork detection).
 interface LineResult { score: number; has4: boolean; has3: boolean; terminal: boolean; }
 
-function scoreLine(str: string): LineResult {
-  // Terminal: 5-in-a-row for either side
+function scoreLine(str: string, wc = 5): LineResult {
+  // Terminal: wc-in-a-row for either side (aggressive override: AI win checked first)
   if (str.includes('XXXXX')) return { score: V_WIN,  has4: true,  has3: false, terminal: true };
   if (str.includes('OOOOO')) return { score: V_LOSE, has4: false, has3: false, terminal: true };
 
-  let score = 0;
-  let has4  = false;
-  let has3  = false;
+  // Dead-line guard: if no viable window of `wc` non-opponent cells exists,
+  // this line can NEVER produce a win — boundary walls make it unreachable.
+  // Score 0 immediately rather than wasting compute on useless patterns.
+  if (!hasViableWindow(str, wc)) return { score: 0, has4: false, has3: false, terminal: false };
+
+  let score = 0, has4 = false, has3 = false;
 
   // ── AI's offensive patterns (positive scores) ──────────────────────────────
 
-  // Open four: _XXXX_ → +100,000
+  // Open four _XXXX_ → +100,000
   const nOf = countOcc(str, '_XXXX_');
   if (nOf > 0) { score += nOf * V_OPEN4; has4 = true; }
 
-  // Blocked four with one open end: OXXXX_ or _XXXXO → +1,000
-  // OXXXXO (both ends blocked) is explicitly excluded → scores 0.
+  // Blocked four one open end (OXXXXO excluded → 0) → +5,000
   const nBf = countOcc(str, 'OXXXX_') + countOcc(str, '_XXXXO');
   if (nBf > 0) { score += nBf * V_BLOCK4; has4 = true; }
 
-  // Broken fours (gap inside a 4-piece sequence) → +1,000
+  // Broken fours — gap inside 4-piece run → +20,000
+  // (Nearly as dangerous as a blocked four; AI uses these as hidden forks)
   const nXf = countOcc(str, 'XX_XX')
             + countOcc(str, 'X_XXX')
             + countOcc(str, 'XXX_X');
   if (nXf > 0) { score += nXf * V_BROKEN4; has4 = true; }
 
-  // Open three: _XXX_ → +50,000
+  // Open three _XXX_ → +50,000
   const nOt = countOcc(str, '_XXX_');
   if (nOt > 0) { score += nOt * V_OPEN3; has3 = true; }
 
-  // Broken threes (both ends open) → +50,000
+  // Broken threes — both ends open → +40,000
   const nBt = countOcc(str, '_X_XX_') + countOcc(str, '_XX_X_');
   if (nBt > 0) { score += nBt * V_BROKEN3; has3 = true; }
 
-  // ── Opponent's dangerous patterns (negative scores = defense penalties) ────
+  // Double-gap three X_X_X → +25,000 (hidden trap; human rarely defends this)
+  const nDg = countOcc(str, 'X_X_X');
+  if (nDg > 0) { score += nDg * V_DBL_GAP3; has3 = true; }
 
-  // Opponent 4-threats — any form that has at least one open end.
-  // Explicitly excluded: XOOOOX (both ends blocked, useless) → 0.
-  const nO4 = countOcc(str, '_OOOO_')            // open four
-            + countOcc(str, 'XOOOO_')             // blocked one end (left)
-            + countOcc(str, '_OOOOX')             // blocked one end (right)
-            + countOcc(str, 'OO_OO')              // broken four center
-            + countOcc(str, 'O_OOO')              // broken four left gap
-            + countOcc(str, 'OOO_O');             // broken four right gap
+  // Half-open broken threes _X_XX / XX_X_ → +15,000
+  const nHb = countOcc(str, '_X_XX') + countOcc(str, 'XX_X_');
+  if (nHb > 0) { score += nHb * V_HALF3; has3 = true; }
+
+  // ── Opponent's dangerous patterns (negative — defense penalties) ─────────
+
+  // Opponent 4-threats — any with at least one open end.
+  // XOOOOX (both ends blocked, useless) explicitly excluded → 0.
+  const nO4 = countOcc(str, '_OOOO_')              // open four
+            + countOcc(str, 'XOOOO_')               // blocked one end (left)
+            + countOcc(str, '_OOOOX')               // blocked one end (right)
+            + countOcc(str, 'OO_OO')                // broken four center
+            + countOcc(str, 'O_OOO')                // broken four left gap
+            + countOcc(str, 'OOO_O');               // broken four right gap
   if (nO4 > 0) score += nO4 * V_OPP4;
 
-  // Opponent open/broken threes → -50,000 each (critical defense fix:
-  // this penalty outweighs the fork bonus, forcing AI to block lethal threats
-  // instead of greedily pursuing its own attacks).
+  // Opponent open/broken threes → -50,000 each
   const nO3 = countOcc(str, '_OOO_')
             + countOcc(str, '_O_OO_')
             + countOcc(str, '_OO_O_');
   if (nO3 > 0) score += nO3 * V_OPP3;
+
+  // Opponent double-gap three O_O_O → -25,000
+  const nOdg = countOcc(str, 'O_O_O');
+  if (nOdg > 0) score += nOdg * (-V_DBL_GAP3);
 
   return { score, has4, has3, terminal: false };
 }
@@ -298,20 +328,21 @@ function evalBoard(
   const ai3d = [false, false, false, false];
 
   for (const { cells, dir } of extractAllLines(board, rows, cols, wc)) {
-    const ls = scoreLine(lineStr(cells, me, opp));
+    const ls = scoreLine(lineStr(cells, me, opp), wc);
     if (ls.terminal) return ls.score;          // WIN or LOSE — no need to continue
     total += ls.score;
     if (ls.has4) ai4d[dir] = true;
     if (ls.has3) ai3d[dir] = true;
   }
 
-  // Fork detection: count distinct directions that carry each threat class
+  // Fork detection: count distinct directions that carry each threat class.
+  // Bonuses are large so the AI actively hunts double-threat intersections.
   const d4 = ai4d.filter(Boolean).length;
   const d3 = ai3d.filter(Boolean).length;
 
-  if      (d4 >= 2)              total += V_FORK44;  // 4-4 fork: +10,000
-  else if (d4 >= 1 && d3 >= 1)  total += V_FORK34;  // 3-4 fork: +9,000
-  else if (d3 >= 2)              total += V_FORK33;  // 3-3 fork: +8,000
+  if      (d4 >= 2)              total += V_FORK44;  // 4-4 fork: +200,000
+  else if (d4 >= 1 && d3 >= 1)  total += V_FORK34;  // 3-4 fork: +80,000
+  else if (d3 >= 2)              total += V_FORK33;  // 3-3 fork: +60,000
 
   return total;
 }
@@ -328,7 +359,7 @@ function quickScore(
   // Attack: score all 4 lines with AI's piece placed here
   board[r][c] = me;
   for (const [dr, dc] of DIRS4) {
-    const ls = scoreLine(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), me, opp));
+    const ls = scoreLine(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), me, opp), wc);
     atk += ls.score;
     if (ls.terminal) { atk = V_WIN * 2; break; }
   }
@@ -336,7 +367,7 @@ function quickScore(
   // Defense: score all 4 lines as if opponent placed here (what AI must prevent)
   board[r][c] = opp;
   for (const [dr, dc] of DIRS4) {
-    const ls = scoreLine(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), opp, me));
+    const ls = scoreLine(lineStr(lineThrough(board, r, c, dr, dc, rows, cols), opp, me), wc);
     def += ls.score;
     if (ls.terminal) { def = V_WIN * 2; break; }
   }
@@ -578,6 +609,23 @@ export function getAIMoveByDifficulty(
     case "medium": return getAIMoveMedium(board, piece, bs, wc);
     default:       return getAIMove(board, piece, bs, wc);
   }
+}
+
+export function removePiece(
+  roomId: string, row: number, col: number, requestingPiece: 1 | 2
+): { success: boolean; room?: GameRoom; error?: string } {
+  const room = rooms.get(roomId);
+  if (!room) return { success: false, error: "Phòng không tồn tại" };
+  if (room.status !== "playing") return { success: false, error: "Trò chơi chưa bắt đầu" };
+  const bs = room.boardSize;
+  if (row < 0 || row >= bs || col < 0 || col >= bs)
+    return { success: false, error: "Vị trí không hợp lệ" };
+  const cell = room.board[row][col];
+  if (cell === 0) return { success: false, error: "Ô này đang trống" };
+  if (cell === requestingPiece) return { success: false, error: "Không thể xóa quân của mình" };
+  room.board[row][col] = 0;
+  room.moveCount = Math.max(0, room.moveCount - 1);
+  return { success: true, room };
 }
 
 export function cleanupOldRooms() {

@@ -2,7 +2,7 @@ import { Server as SocketIOServer, Socket } from "socket.io";
 import {
   createRoom, getRoom, joinRoom, makeMove,
   resetGame, getAIMoveByDifficulty, cleanupOldRooms,
-  setTurnTime, skipTurn, AIDifficulty,
+  setTurnTime, skipTurn, removePiece, AIDifficulty,
 } from "./game";
 import { logger } from "./lib/logger";
 
@@ -130,6 +130,20 @@ export function setupSocketIO(io: SocketIOServer) {
         const move = getAIMoveByDifficulty(room.board, data.piece, room.boardSize, room.winCount, "hard");
         cb({ move });
       } catch (e) { logger.error(e, "get_ai_hint"); cb({ error: "Lỗi AI" }); }
+    });
+
+    // remove_piece: cheat-mode — delete an opponent's piece without giving AI a turn
+    socket.on("remove_piece", (
+      data: { roomId: string; row: number; col: number; requestingPiece: 1 | 2 },
+      cb?: (r: any) => void
+    ) => {
+      try {
+        const result = removePiece(data.roomId, data.row, data.col, data.requestingPiece);
+        if (!result.success) { cb?.({ error: result.error }); return; }
+        // Broadcast board update — intentionally does NOT trigger scheduleAIMove
+        io.to(data.roomId).emit("room_updated", result.room);
+        cb?.({ success: true });
+      } catch (e) { logger.error(e, "remove_piece"); cb?.({ error: "Lỗi xóa quân" }); }
     });
 
     socket.on("disconnect", () => {

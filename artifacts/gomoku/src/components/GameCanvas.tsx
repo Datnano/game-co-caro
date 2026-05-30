@@ -19,6 +19,8 @@ interface Props {
   danmakuMessages: DanmakuMsg[];
   boardBg?: string;
   boardBorder?: string;
+  deleteMode?: boolean;
+  onDeletePiece?: (row: number, col: number) => void;
 }
 
 interface SkinConfig {
@@ -216,7 +218,8 @@ function drawPiece(ctx: CanvasRenderingContext2D, cx: number, cy: number, R: num
 // ── component ────────────────────────────────────────────────────────────────
 
 export default function GameCanvas({ board, boardSize, onMove, myPiece, currentTurn,
-  winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder }: Props) {
+  winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder,
+  deleteMode, onDeletePiece }: Props) {
 
   const canvasRef   = useRef<HTMLCanvasElement>(null);
   const rafRef      = useRef<number>(0);
@@ -256,6 +259,15 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
       const gr = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, W*0.6);
       gr.addColorStop(0, "rgba(30,60,140,0.06)"); gr.addColorStop(1, "transparent");
       ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+    }
+
+    // Delete mode: pulsing red tint over the board area
+    if (deleteMode) {
+      const redA = 0.10 + Math.abs(pulse) * 0.06;
+      ctx.save();
+      ctx.fillStyle = `rgba(220, 30, 30, ${redA})`;
+      ctx.fillRect(PL, PT, GW, GH);
+      ctx.restore();
     }
 
     // Coordinate labels — precisely aligned to grid
@@ -405,7 +417,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     });
 
     rafRef.current = requestAnimationFrame(draw);
-  }, [board, boardSize, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder]);
+  }, [board, boardSize, myPiece, currentTurn, winLine, status, skin, aiHint, danmakuMessages, boardBg, boardBorder, deleteMode]);
 
   useEffect(() => {
     rafRef.current = requestAnimationFrame(draw);
@@ -449,10 +461,21 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
   }
 
   function handleClick(e: React.MouseEvent<HTMLCanvasElement>) {
-    if (status !== "playing" || currentTurn !== myPiece) return;
     const cell = getCell(e);
     if (!cell) return;
     const [r, c] = cell;
+
+    // ── Delete mode: click opponent piece to remove it (no AI turn after)
+    if (deleteMode) {
+      const cellVal = board[r]?.[c];
+      if (cellVal !== 0 && cellVal !== myPiece) {
+        pendingRef.current = null;
+        onDeletePiece?.(r, c);
+      }
+      return;
+    }
+
+    if (status !== "playing" || currentTurn !== myPiece) return;
     if (board[r]?.[c] !== 0) return;
     const pending = pendingRef.current;
     if (pending && pending[0]===r && pending[1]===c) {
@@ -462,7 +485,6 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
 
   function handleTouchEnd(e: React.TouchEvent<HTMLCanvasElement>) {
     e.preventDefault();
-    if (status !== "playing" || currentTurn !== myPiece) return;
     const canvas = canvasRef.current;
     if (!canvas || e.changedTouches.length === 0) return;
     const rect = canvas.getBoundingClientRect();
@@ -474,6 +496,18 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
     );
     if (!cell) return;
     const [r, c] = cell;
+
+    // ── Delete mode: tap opponent piece to remove it
+    if (deleteMode) {
+      const cellVal = board[r]?.[c];
+      if (cellVal !== 0 && cellVal !== myPiece) {
+        pendingRef.current = null;
+        onDeletePiece?.(r, c);
+      }
+      return;
+    }
+
+    if (status !== "playing" || currentTurn !== myPiece) return;
     if (board[r]?.[c] !== 0) return;
     const pending = pendingRef.current;
     if (pending && pending[0]===r && pending[1]===c) {
@@ -494,7 +528,7 @@ export default function GameCanvas({ board, boardSize, onMove, myPiece, currentT
       onMouseMove={handleMouseMove}
       onMouseLeave={handleMouseLeave}
       onTouchEnd={handleTouchEnd}
-      style={{ cursor: status==="playing" && currentTurn===myPiece ? "crosshair" : "default" }}
+      style={{ cursor: deleteMode ? "pointer" : (status==="playing" && currentTurn===myPiece ? "crosshair" : "default") }}
     />
   );
 }

@@ -260,6 +260,9 @@ body { background: var(--bg-deep); color: var(--text-hi); font-family: var(--fon
 }
 .cheat-btn:hover { background: linear-gradient(135deg,rgba(255,170,0,.3),rgba(255,80,0,.26)); box-shadow: 0 0 12px rgba(255,170,0,.28); }
 .cheat-btn.active { border-color: rgba(255,200,0,.7); box-shadow: 0 0 16px rgba(255,200,0,.4); animation: pulse 1s infinite; }
+.delete-mode-btn { background: linear-gradient(135deg,rgba(220,40,40,.18),rgba(180,0,0,.14)); border-color: rgba(220,60,60,.38); color: #ff8888; }
+.delete-mode-btn:hover { background: linear-gradient(135deg,rgba(220,40,40,.30),rgba(180,0,0,.26)); box-shadow: 0 0 12px rgba(220,40,40,.32); }
+.delete-mode-btn.delete-active { border-color: rgba(255,60,60,.80); color: #ffaaaa; box-shadow: 0 0 18px rgba(255,30,30,.50); animation: pulse 1s infinite; }
 
 /* header row 2 */
 .header-row2 { display: flex; align-items: center; gap: 6px; min-width: 0; }

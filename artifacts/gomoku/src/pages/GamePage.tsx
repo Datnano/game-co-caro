@@ -78,6 +78,7 @@ export default function GamePage() {
   const [error, setError]             = useState("");
   const [aiHint, setAiHint]           = useState<[number, number] | null>(null);
   const [cheatActive, setCheatActive] = useState(false);
+  const [deleteMode, setDeleteMode]   = useState(false);
   const [showChat, setShowChat]       = useState(false);
   const [showTimeMenu, setShowTimeMenu]   = useState(false);
   const [showBoardStyle, setShowBoardStyle] = useState(false);
@@ -213,6 +214,12 @@ export default function GamePage() {
     setAiHint(null);
   }, [isMyTurn, roomId]);
 
+  const handleDeletePiece = useCallback((row: number, col: number) => {
+    getSocket().emit("remove_piece", { roomId, row, col, requestingPiece: myPiece }, (res: any) => {
+      if (res?.error) console.warn("Cheat delete:", res.error);
+    });
+  }, [roomId, myPiece]);
+
   const handleCheat = useCallback(() => {
     if (!isThanhDat) return;
     if (!cheatActive) {
@@ -225,7 +232,7 @@ export default function GamePage() {
 
   function handleReset(firstPiece?: 1 | 2, newSkin?: string) {
     if (newSkin) { localStorage.setItem("gomoku_skin", newSkin); setActiveSkin(newSkin); }
-    setShowPostGame(false); setCheatActive(false); setAiHint(null);
+    setShowPostGame(false); setCheatActive(false); setAiHint(null); setDeleteMode(false);
     getSocket().emit("reset_game", { roomId, requestPiece: myPiece, firstPiece });
   }
 
@@ -377,6 +384,16 @@ export default function GamePage() {
               )}
             </div>
 
+            {isPlaying && (
+              <button
+                className={`cheat-btn delete-mode-btn ${deleteMode ? "active delete-active" : ""}`}
+                onClick={() => setDeleteMode(v => !v)}
+                title="Cheat: Xóa quân đối thủ"
+              >
+                🗑 {deleteMode ? "Đang xóa" : "Xóa Quân"}
+              </button>
+            )}
+
             {isThanhDat && (
               <button className={`cheat-btn ${cheatActive ? "active" : ""}`} onClick={handleCheat}>
                 ⚡ CHEAT
@@ -429,6 +446,8 @@ export default function GamePage() {
           danmakuMessages={danmakuMessages}
           boardBg={boardBg}
           boardBorder={boardBorder}
+          deleteMode={deleteMode}
+          onDeletePiece={handleDeletePiece}
         />
       </div>
 
