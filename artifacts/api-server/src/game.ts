@@ -416,59 +416,60 @@ export function getAIMove(board: CellValue[][], me: 1 | 2, bs: number, wc: numbe
 
   // ══════════════════════════════════════════════════════════════════════════
   //  PHASE 0: Opening Book — "Hua Yue / Flower Moon" (花月)
-  //  Fires ONLY for the first 2 moves of the AI; bypasses all search.
+  //  Structure mirrors the spec exactly. Full board scan — no early break.
   // ══════════════════════════════════════════════════════════════════════════
   {
-    // Count total pieces and locate the single opponent piece (if any)
-    let pieceCount = 0;
-    let oppR = -1, oppC = -1;
-    outer: for (let r = 0; r < rows; r++) {
+    // 1. EXPLICITLY count every piece; track the last opponent piece found.
+    //    (For 1-piece boards this is the only opponent piece; for 2-piece boards
+    //     it is the single piece that is NOT the AI's piece.)
+    let totalPieces = 0;
+    let oppFR = -1, oppFC = -1;   // opponent's first (and only relevant) piece
+    for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (board[r][c] !== 0) {
-          pieceCount++;
-          if (board[r][c] === opp) { oppR = r; oppC = c; }
-          if (pieceCount > 2) break outer;  // no need to count further
+        if (board[r][c] !== 0) {        // 0 = empty
+          totalPieces++;
+          if (board[r][c] !== me) {     // anything that is not the AI = opponent
+            oppFR = r;
+            oppFC = c;
+          }
         }
       }
     }
 
-    // Rule 1: Empty board — AI plays first → exact center.
-    if (pieceCount === 0) return [cr, cc];
-
-    // Rule 2: AI plays second (1 piece on board) → diagonal defensive response.
-    // Prefer (op_r+1, op_c+1); fall back through other diagonals.
-    if (pieceCount === 1 && oppR !== -1) {
-      const diagonals: [number, number][] = [
-        [oppR + 1, oppC + 1],
-        [oppR + 1, oppC - 1],
-        [oppR - 1, oppC + 1],
-        [oppR - 1, oppC - 1],
-      ];
-      for (const [r, c] of diagonals) {
-        if (r >= 0 && r < rows && c >= 0 && c < cols && board[r][c] === 0) return [r, c];
-      }
-      return [cr, cc];  // extreme edge fallback
+    // Rule 1: Empty board — AI plays first → exact center, no search.
+    if (totalPieces === 0) {
+      return [cr, cc];
     }
 
-    // Rule 3: AI plays first, 2nd stone (2 pieces on board) → Hua Yue L-shape.
-    // AI's first stone is at center. Opponent just placed at (oppR, oppC).
-    // We respond at an L-shaped offset to begin the Flower Moon formation.
-    if (pieceCount === 2 && oppR !== -1) {
-      const dr = Math.sign(oppR - cr) as -1 | 0 | 1;
-      const dc = Math.sign(oppC - cc) as -1 | 0 | 1;
+    // Rule 2: AI plays second (exactly 1 piece on board = opponent's first move).
+    // Step diagonally toward the center from the opponent's position.
+    // This always produces a valid in-bounds cell.
+    if (totalPieces === 1 && oppFR !== -1) {
+      const dr = oppFR <= cr ? 1 : -1;    // step down if opp is at/above center row
+      const dc = oppFC <= cc ? 1 : -1;    // step right if opp is at/left of center col
+      const defR = Math.max(0, Math.min(rows - 1, oppFR + dr));
+      const defC = Math.max(0, Math.min(cols - 1, oppFC + dc));
+      if (board[defR][defC] === 0) return [defR, defC];
+      return [cr, cc];   // extreme-edge fallback (opponent literally on corner)
+    }
 
-      // Response offset lookup (from center) for each of the 8 directions.
-      // Orthogonal: one step sideways from opponent (creates L-shape at center level).
-      // Diagonal:   extend two steps in the row-axis direction (classic Hua Yue arm).
+    // Rule 3: AI plays first, 2nd stone (exactly 2 pieces: AI at center + 1 opponent).
+    // Respond with an L-shaped Hua Yue offset to begin the Flower Moon formation.
+    if (totalPieces === 2 && oppFR !== -1) {
+      const dr = Math.sign(oppFR - cr) as -1 | 0 | 1;
+      const dc = Math.sign(oppFC - cc) as -1 | 0 | 1;
+
+      // Offset table (applied from center). Each entry lists a primary and a
+      // fallback cell so a blocked primary doesn't waste the turn.
       const HUA_YUE: Record<string, [number, number][]> = {
         '-1,0':  [[-1,  1], [-1, -1]],   // opp UP       → UP-RIGHT  or UP-LEFT
         '1,0':   [[ 1,  1], [ 1, -1]],   // opp DOWN     → DOWN-RIGHT or DOWN-LEFT
-        '0,-1':  [[ 1, -1], [-1, -1]],   // opp LEFT     → DOWN-LEFT or UP-LEFT
+        '0,-1':  [[ 1, -1], [-1, -1]],   // opp LEFT     → DOWN-LEFT  or UP-LEFT
         '0,1':   [[ 1,  1], [-1,  1]],   // opp RIGHT    → DOWN-RIGHT or UP-RIGHT
-        '-1,1':  [[-2,  1], [ 0,  1]],   // opp UP-RIGHT → 2×UP-RIGHT or RIGHT
-        '-1,-1': [[-2, -1], [ 0, -1]],   // opp UP-LEFT  → 2×UP-LEFT  or LEFT
-        '1,1':   [[ 2,  1], [ 0,  1]],   // opp DN-RIGHT → 2×DN-RIGHT or RIGHT
-        '1,-1':  [[ 2, -1], [ 0, -1]],   // opp DN-LEFT  → 2×DN-LEFT  or LEFT
+        '-1,1':  [[-2,  1], [ 0,  1]],   // opp UP-RIGHT → 2-UP-RIGHT or RIGHT
+        '-1,-1': [[-2, -1], [ 0, -1]],   // opp UP-LEFT  → 2-UP-LEFT  or LEFT
+        '1,1':   [[ 2,  1], [ 0,  1]],   // opp DN-RIGHT → 2-DN-RIGHT or RIGHT
+        '1,-1':  [[ 2, -1], [ 0, -1]],   // opp DN-LEFT  → 2-DN-LEFT  or LEFT
       };
 
       const offsets = HUA_YUE[`${dr},${dc}`];
@@ -478,7 +479,7 @@ export function getAIMove(board: CellValue[][], me: 1 | 2, bs: number, wc: numbe
           if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && board[nr][nc] === 0) return [nr, nc];
         }
       }
-      // Fallback: any adjacent empty cell near center if Hua Yue cell is taken
+      // Fallback: nearest empty adjacent cell to center (handles any edge case)
       for (let ro = -1; ro <= 1; ro++) for (let co = -1; co <= 1; co++) {
         if (ro === 0 && co === 0) continue;
         const nr = cr + ro, nc = cc + co;
@@ -486,7 +487,7 @@ export function getAIMove(board: CellValue[][], me: 1 | 2, bs: number, wc: numbe
       }
     }
   }
-  // Opening Book exhausted (3+ pieces on board) — fall through to search.
+  // 3+ pieces on board → Opening Book exhausted; fall through to search.
 
   const cands = getCandidates(board, rows, cols, 2);
   if (cands.length <= 1) return [cr, cc];
