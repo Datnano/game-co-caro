@@ -14,40 +14,30 @@ export interface GameRoom {
 export interface Player { id: string; name: string; piece: 1 | 2; sessionId: string; }
 
 const rooms = new Map<string, GameRoom>();
-
-function makeBoard(size: number): CellValue[][] {
-  return Array.from({ length: size }, () => Array(size).fill(0) as CellValue[]);
-}
-function randomCode(len = 6): string {
-  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  return Array.from({ length: len }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
-}
-function clampBoardSize(n: number) { return Math.min(Math.max(n, 3), 30); }
-function getWinCount(bs: number)   { return bs <= 3 ? 3 : bs <= 4 ? 4 : 5; }
-function clampTime(t: number)      { return Math.min(Math.max(t, 10), 300); }
+function makeBoard(n: number): CellValue[][] { return Array.from({ length: n }, () => Array(n).fill(0) as CellValue[]); }
+function randCode(len = 6) { const c = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; return Array.from({ length: len }, () => c[Math.random() * c.length | 0]).join(""); }
+function clampBS(n: number) { return Math.min(Math.max(n, 3), 30); }
+function getWC(bs: number)  { return bs <= 3 ? 3 : bs <= 4 ? 4 : 5; }
+function clampT(t: number)  { return Math.min(Math.max(t, 10), 300); }
 
 export function createRoom(turnTime = 30, boardSize = DEFAULT_BOARD_SIZE, aiDifficulty?: AIDifficulty): GameRoom {
-  let id = randomCode();
-  while (rooms.has(id)) id = randomCode();
-  const bs = clampBoardSize(boardSize);
+  let id = randCode(); while (rooms.has(id)) id = randCode();
+  const bs = clampBS(boardSize);
   const room: GameRoom = {
-    id, players: [], board: makeBoard(bs),
-    currentTurn: 1, status: "waiting", winner: 0, winLine: null,
-    moveCount: 0, lastLoser: 0, scores: { 1: 0, 2: 0 },
-    createdAt: Date.now(), turnTime: clampTime(turnTime),
-    boardSize: bs, winCount: getWinCount(bs),
+    id, players: [], board: makeBoard(bs), currentTurn: 1, status: "waiting",
+    winner: 0, winLine: null, moveCount: 0, lastLoser: 0, scores: { 1: 0, 2: 0 },
+    createdAt: Date.now(), turnTime: clampT(turnTime), boardSize: bs, winCount: getWC(bs),
     aiPiece: aiDifficulty ? 2 : 0, aiDifficulty: aiDifficulty ?? "medium",
   };
-  rooms.set(id, room);
-  return room;
+  rooms.set(id, room); return room;
 }
 export function getRoom(id: string) { return rooms.get(id); }
 
 export function joinRoom(roomId: string, playerId: string, playerName: string, sessionId: string): { room: GameRoom; piece: 1 | 2 } | { error: string } {
   const room = rooms.get(roomId);
   if (!room) return { error: "Phòng không tồn tại" };
-  const existing = room.players.find(p => p.sessionId === sessionId || p.id === playerId);
-  if (existing) { existing.id = playerId; return { room, piece: existing.piece }; }
+  const ex = room.players.find(p => p.sessionId === sessionId || p.id === playerId);
+  if (ex) { ex.id = playerId; return { room, piece: ex.piece }; }
   if (room.players.length >= 2) return { error: "Phòng đã đầy" };
   const piece: 1 | 2 = room.players.length === 0 ? 1 : 2;
   room.players.push({ id: playerId, name: playerName, piece, sessionId });
@@ -65,49 +55,35 @@ export function makeMove(roomId: string, playerId: string, row: number, col: num
   const bs = room.boardSize;
   if (row < 0 || row >= bs || col < 0 || col >= bs) return { success: false, error: "Vị trí không hợp lệ" };
   if (room.board[row][col] !== 0) return { success: false, error: "Ô đã có quân" };
-  room.board[row][col] = player.piece;
-  room.moveCount++;
-  const winLine = checkWin(room.board, row, col, player.piece, bs, room.winCount);
-  if (winLine) {
-    room.winner = player.piece; room.winLine = winLine; room.status = "finished";
-    room.scores[player.piece]++;
-    room.lastLoser = player.piece === 1 ? 2 : 1;
-  } else if (room.moveCount >= bs * bs) {
-    room.status = "finished"; room.winner = 0;
-  } else {
-    room.currentTurn = room.currentTurn === 1 ? 2 : 1;
-  }
+  room.board[row][col] = player.piece; room.moveCount++;
+  const wl = checkWin(room.board, row, col, player.piece, bs, room.winCount);
+  if (wl) { room.winner = player.piece; room.winLine = wl; room.status = "finished"; room.scores[player.piece]++; room.lastLoser = player.piece === 1 ? 2 : 1; }
+  else if (room.moveCount >= bs * bs) { room.status = "finished"; room.winner = 0; }
+  else room.currentTurn = room.currentTurn === 1 ? 2 : 1;
   return { success: true, room };
 }
 
 export function resetGame(roomId: string, requestPiece?: 1 | 2, firstPiece?: 1 | 2): GameRoom | null {
   const room = rooms.get(roomId);
   if (!room || room.players.length < 2) return null;
-  if (room.aiPiece === 0 && room.lastLoser !== 0 && requestPiece !== undefined)
-    if (requestPiece !== room.lastLoser) return null;
-  room.board = makeBoard(room.boardSize); room.winner = 0; room.winLine = null;
-  room.moveCount = 0; room.status = "playing";
-  if (firstPiece) room.currentTurn = firstPiece;
-  else if (room.lastLoser !== 0) room.currentTurn = room.lastLoser as 1 | 2;
-  else room.currentTurn = 1;
+  if (room.aiPiece === 0 && room.lastLoser !== 0 && requestPiece !== undefined && requestPiece !== room.lastLoser) return null;
+  room.board = makeBoard(room.boardSize); room.winner = 0; room.winLine = null; room.moveCount = 0; room.status = "playing";
+  room.currentTurn = firstPiece ?? (room.lastLoser !== 0 ? room.lastLoser as 1 | 2 : 1);
   return room;
 }
 
 export function skipTurn(roomId: string, piece: 1 | 2): GameRoom | null {
   const room = rooms.get(roomId);
-  if (!room || room.status !== "playing") return null;
-  if (room.currentTurn !== piece) return null;
-  room.currentTurn = room.currentTurn === 1 ? 2 : 1;
-  return room;
+  if (!room || room.status !== "playing" || room.currentTurn !== piece) return null;
+  room.currentTurn = room.currentTurn === 1 ? 2 : 1; return room;
 }
 
 export function setTurnTime(roomId: string, seconds: number): GameRoom | null {
   const room = rooms.get(roomId);
-  if (!room) return null;
-  room.turnTime = clampTime(seconds);
-  return room;
+  if (!room) return null; room.turnTime = clampT(seconds); return room;
 }
 
+// ── checkWin: scan 4 directions from last move ─────────────────────────────────
 export function checkWin(
   board: CellValue[][], row: number, col: number,
   piece: CellValue, boardSize: number, winCount: number
@@ -115,323 +91,329 @@ export function checkWin(
   const dirs = [[0,1],[1,0],[1,1],[1,-1]];
   for (const [dr, dc] of dirs) {
     const line: [number, number][] = [[row, col]];
-    for (let i = 1; i < winCount; i++) {
-      const r = row+dr*i, c = col+dc*i;
-      if (r<0||r>=boardSize||c<0||c>=boardSize||board[r][c]!==piece) break;
-      line.push([r, c]);
-    }
-    for (let i = 1; i < winCount; i++) {
-      const r = row-dr*i, c = col-dc*i;
-      if (r<0||r>=boardSize||c<0||c>=boardSize||board[r][c]!==piece) break;
-      line.push([r, c]);
-    }
+    for (let i = 1; i < winCount; i++) { const r=row+dr*i,c=col+dc*i; if(r<0||r>=boardSize||c<0||c>=boardSize||board[r][c]!==piece) break; line.push([r,c]); }
+    for (let i = 1; i < winCount; i++) { const r=row-dr*i,c=col-dc*i; if(r<0||r>=boardSize||c<0||c>=boardSize||board[r][c]!==piece) break; line.push([r,c]); }
     if (line.length >= winCount) return line.slice(0, winCount);
   }
   return null;
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  CHEAT AI V2.0 UNIVERSAL — áp dụng mọi kích thước NxN
-//  Luật VN: cấm thế đôi 4 (2 hàng 4 cùng lúc → thua)
-// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//  AI ENGINE V3 — Professional Minimax + Alpha-Beta
+//  Strict scoring rules (user spec):
+//    Win           =  +1,000,000  (terminate search)
+//    Opp 4-ready   =  -1,000,000  (must block)
+//    Open Four     =  +10,000     (_XXXX_)
+//    Blocked Four  =  +1,000      (OXXXX_ or _XXXXO)
+//    Both-blocked  =  0           (OXXXXO — CRITICAL: NEVER waste move)
+//    Open Three    =  +1,000      (_XXX_)
+//    Fork 4-4      =  +10,000
+//    Fork 3-4      =  +9,000
+//    Fork 3-3      =  +8,000
+// ══════════════════════════════════════════════════════════════════════════════
 
-const DIRS = [[0,1],[1,0],[1,1],[1,-1]] as const;
-const WIN_SCORE   = 9_999_999;
-const BLOCK_SCORE = 9_998_000;   // chặn đối thủ thắng
-const FORBIDDEN   = -9_999_000;  // thế cấm đôi 4 → không đi
+const AI_WIN  =  1_000_000;
+const AI_LOSE = -1_000_000;
+const DIRS4   = [[0,1],[1,0],[1,1],[1,-1]] as const;
 
-// SCAN_RADIUS tự co giãn theo bàn: 20x20→4, 15x15→3, 10x10→3
-function getScanRadius(bs: number): number {
-  return Math.max(3, Math.floor(bs / 5));
+// ── Dynamic search depth by board size ───────────────────────────────────────
+function searchDepth(bs: number): number {
+  if (bs <= 5)  return 6;
+  if (bs <= 10) return 5;
+  return 4;
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  BẢNG ĐIỂM TỰ CO GIÃN THEO WIN_CONDITION
-//  count = số quân liên tiếp, block = số đầu bị chặn (0/1/2)
-// ══════════════════════════════════════════════════════════════════
-function getScore(count: number, block: number, wc: number): number {
-  if (count >= wc)       return WIN_SCORE;   // 5 (hoặc wc) liên tiếp → thắng
-  if (block >= 2)        return 0;           // 2 đầu đều bị chặn → vô dụng, bỏ qua
-  const open = block === 0;                  // true = thế sống (2 đầu trống)
+// ── Line evaluation: scan an array of cells for consecutive patterns ──────────
+// Returns { score, open4, open3, blocked4 }
+// CRITICAL: blocks=2 (both ends blocked) → score=0, completely useless
+function evalLine(cells: CellValue[], piece: CellValue, opp: CellValue, wc: number): {
+  score: number; open4: number; open3: number; blocked4: number; isWin: boolean;
+} {
+  const n = cells.length;
+  let score = 0, open4 = 0, open3 = 0, blocked4 = 0;
+  let i = 0;
+  while (i < n) {
+    if (cells[i] !== piece) { i++; continue; }
+    const start = i;
+    while (i < n && cells[i] === piece) i++;
+    const count = i - start;
 
-  if (count === wc - 1)  return open ? 100_000 : 5_000;   // 4 sống / 4 chết
-  if (count === wc - 2)  return open ? 10_000  : 100;     // 3 sống / 3 chết
-  if (count === wc - 3)  return open ? 500     : 0;       // 2 sống / 2 chết = bỏ qua
-  return 0;
-}
+    // Check what lies immediately OUTSIDE the run (determines open/blocked)
+    const leftBlocked  = (start === 0)  || cells[start - 1] === opp;
+    const rightBlocked = (i    >= n)    || cells[i]         === opp;
+    const blocks = (leftBlocked ? 1 : 0) + (rightBlocked ? 1 : 0);
 
-// ══════════════════════════════════════════════════════════════════
-//  score_lines: quét 1 hướng, trả { count, block }
-//  Thuật toán chính xác theo đặc tả:
-//    - Đếm quân liên tiếp tới win-1 bước
-//    - Nếu gặp OOB hoặc quân địch → block++, dừng
-//    - Nếu gặp ô trống → dừng (KHÔNG tăng block = đầu mở)
-// ══════════════════════════════════════════════════════════════════
-function scanDir(
-  board: CellValue[][], r: number, c: number,
-  dr: number, dc: number, piece: CellValue, bs: number, wc: number
-): { count: number; block: number } {
-  let count = 1, block = 0;
-  // Quét phía trước (tối đa wc-1 bước)
-  for (let i = 1; i < wc; i++) {
-    const nr = r + dr * i, nc = c + dc * i;
-    if (nr < 0 || nr >= bs || nc < 0 || nc >= bs) { block++; break; }
-    if (board[nr][nc] === piece) { count++; continue; }
-    if (board[nr][nc] !== 0)    { block++; break; }  // quân địch
-    break;                                            // ô trống → đầu mở, dừng
+    if (count >= wc) return { score: AI_WIN, open4, open3, blocked4, isWin: true };
+
+    // CRITICAL FIX: both ends blocked → completely useless, score = 0
+    if (blocks === 2) continue;
+
+    const isOpen = (blocks === 0);
+
+    if      (count === wc - 1) { if (isOpen) { score += 10_000; open4++;   } else { score += 1_000; blocked4++; } }
+    else if (count === wc - 2) { if (isOpen) { score +=  1_000; open3++;   } else   score +=   100; }
+    else if (count === wc - 3) { if (isOpen)   score +=     50; }
+    else if (count === 1)      { if (isOpen)   score +=     10; }
   }
-  // Quét phía sau (tối đa wc-1 bước)
-  for (let i = 1; i < wc; i++) {
-    const nr = r - dr * i, nc = c - dc * i;
-    if (nr < 0 || nr >= bs || nc < 0 || nc >= bs) { block++; break; }
-    if (board[nr][nc] === piece) { count++; continue; }
-    if (board[nr][nc] !== 0)    { block++; break; }  // quân địch
-    break;                                            // ô trống → đầu mở, dừng
-  }
-  return { count, block };
+  return { score, open4, open3, blocked4, isWin: false };
 }
 
-// ── score_lines: tổng điểm tất cả 4 hướng cho quân piece tại (r,c) ──
-// PHẢI đặt board[r][c] = piece TRƯỚC KHI gọi hàm này
-function scoreLines(board: CellValue[][], r: number, c: number, piece: CellValue, bs: number, wc: number): number {
-  let total = 0;
-  for (const [dr, dc] of DIRS) {
-    const { count, block } = scanDir(board, r, c, dr, dc, piece, bs, wc);
-    total += getScore(count, block, wc);
+// ── Extract all scannable lines from board (rows, cols, diagonals) ────────────
+// Supports any N×M board — NO hardcoded size
+function extractLines(board: CellValue[][], rows: number, cols: number, wc: number): CellValue[][] {
+  const lines: CellValue[][] = [];
+
+  // Horizontal rows
+  for (let r = 0; r < rows; r++) {
+    if (cols >= wc) lines.push(board[r].slice() as CellValue[]);
   }
-  return total;
+
+  // Vertical columns
+  for (let c = 0; c < cols; c++) {
+    if (rows >= wc) { const col: CellValue[] = []; for (let r = 0; r < rows; r++) col.push(board[r][c]); lines.push(col); }
+  }
+
+  // Diagonal ↘ (top-left to bottom-right) — d = startRow - startCol offset
+  for (let d = -(cols - 1); d <= rows - 1; d++) {
+    const diag: CellValue[] = [];
+    const r0 = Math.max(0, -d), c0 = Math.max(0, d);
+    for (let s = 0; r0 + s < rows && c0 + s < cols; s++) diag.push(board[r0 + s][c0 + s]);
+    if (diag.length >= wc) lines.push(diag);
+  }
+
+  // Anti-diagonal ↙ (top-right to bottom-left) — d = startRow + startCol
+  for (let d = 0; d <= rows + cols - 2; d++) {
+    const anti: CellValue[] = [];
+    const r0 = Math.max(0, d - cols + 1), c0 = Math.min(d, cols - 1);
+    for (let s = 0; r0 + s < rows && c0 - s >= 0; s++) anti.push(board[r0 + s][c0 - s]);
+    if (anti.length >= wc) lines.push(anti);
+  }
+
+  return lines;
 }
 
-// ── countFours: đếm số hướng có hàng 4 quân (sống hoặc chết) ────
-// Dùng để kiểm tra thế cấm đôi 4
-function countFours(board: CellValue[][], r: number, c: number, piece: CellValue, bs: number, wc: number): number {
-  let fours = 0;
-  for (const [dr, dc] of DIRS) {
-    const { count, block } = scanDir(board, r, c, dr, dc, piece, bs, wc);
-    if (count === wc - 1 && block < 2) fours++; // hàng 4 sống hoặc chết
-  }
-  return fours;
-}
-
-// ── count_fork: đếm số "thế" ≥ live3 tạo ra cùng lúc ────────────
-// Mỗi hướng có 3 sống (hoặc 4) = 1 mối đe doạ độc lập
-// fork_count = max(0, threats - 1) → 2 đe doạ = 1 nước đôi
-function countFork(board: CellValue[][], r: number, c: number, piece: CellValue, bs: number, wc: number): number {
-  board[r][c] = piece;
-  let threats = 0;
-  for (const [dr, dc] of DIRS) {
-    const { count, block } = scanDir(board, r, c, dr, dc, piece, bs, wc);
-    // Đe doạ = 3 sống trở lên, hoặc 4 bất kể
-    if ((count >= wc - 2 && block === 0) || (count >= wc - 1 && block < 2)) threats++;
-  }
-  board[r][c] = 0;
-  return Math.max(0, threats - 1);
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  evaluate_move: 3 lớp chấm điểm
-//    Lớp 1: Thắng/thua ngay (±WIN_SCORE)
-//    Lớp 2: Điểm tấn công + phòng thủ (DEF * 1.2)
-//    Lớp 3: Nước đôi (fork * 50000)
-//  + Luật cấm thế đôi: 2+ hàng 4 cùng lúc → FORBIDDEN
-// ══════════════════════════════════════════════════════════════════
-function evaluateMove(
-  board: CellValue[][], r: number, c: number,
-  me: CellValue, opp: CellValue, bs: number, wc: number
+// ── Full board static evaluation ──────────────────────────────────────────────
+// Scans ALL lines, applies strict scoring + fork detection
+function evalBoard(
+  board: CellValue[][], me: CellValue, opp: CellValue,
+  rows: number, cols: number, wc: number
 ): number {
-  const center = Math.floor(bs / 2);
-  const dist   = Math.max(Math.abs(r - center), Math.abs(c - center));
+  const lines = extractLines(board, rows, cols, wc);
+  let myScore = 0, oppScore = 0;
+  let myOpen4 = 0, myOpen3 = 0, myBlocked4 = 0;
+  let oppOpen4 = 0, oppBlocked4 = 0;
 
-  // ── Lớp 1: Thắng ngay ──────────────────────────────────────────
-  board[r][c] = me;
-  if (checkWin(board, r, c, me, bs, wc)) { board[r][c] = 0; return WIN_SCORE; }
+  for (const line of lines) {
+    const my = evalLine(line, me,  opp, wc);
+    const op = evalLine(line, opp, me,  wc);
+    if (my.isWin) return  AI_WIN;   // AI wins → terminal
+    if (op.isWin) return  AI_LOSE;  // Opponent wins → terminal
 
-  // Kiểm tra thế CẤM: tạo 2+ hàng 4 mà không thắng
-  const foursCreated = countFours(board, r, c, me, bs, wc);
-  if (foursCreated >= 2) { board[r][c] = 0; return FORBIDDEN; }
+    myScore += my.score; oppScore += op.score;
+    myOpen4  += my.open4;  myOpen3   += my.open3;  myBlocked4  += my.blocked4;
+    oppOpen4 += op.open4;  oppBlocked4 += op.blocked4;
+  }
 
-  // Điểm tấn công (đặt quân mình)
-  const myScore = scoreLines(board, r, c, me, bs, wc);
-  board[r][c] = 0;
+  // Spec: opponent has 4 ready to win → -1,000,000 (must block)
+  // This covers both _OOOO_ (open4) and XOOOO_ (blocked4 with one open end)
+  if (oppOpen4 + oppBlocked4 > 0) return AI_LOSE;
 
-  // ── Lớp 1b: Chặn đối thủ thắng ngay ───────────────────────────
-  board[r][c] = opp;
-  if (checkWin(board, r, c, opp, bs, wc)) { board[r][c] = 0; return BLOCK_SCORE; }
+  // Fork bonuses (from AI's perspective)
+  let fork = 0;
+  if      (myOpen4 >= 2)                     fork = 10_000;  // 4-4: opponent can't block both
+  else if (myOpen4 >= 1 && myOpen3 >= 1)     fork =  9_000;  // 3-4: strong fork
+  else if (myOpen3 >= 2)                     fork =  8_000;  // 3-3: double open three
 
-  // Điểm phòng thủ (đặt quân địch để đo giá trị chặn)
-  const oppScore = scoreLines(board, r, c, opp, bs, wc);
-  board[r][c] = 0;
-
-  // ── Lớp 3: Bonus nước đôi (fork) ─────────────────────────────
-  const forkBonus = countFork(board, r, c, me, bs, wc) * 50_000;
-
-  // Bonus gần trung tâm (giảm dần khi xa)
-  const centerBonus = Math.max(0, (bs / 2 - dist)) * 3;
-
-  // Tổng: ATK + DEF*1.2 + fork + center
-  return myScore + oppScore * 1.2 + forkBonus + centerBonus;
+  return myScore + fork - oppScore * 1.2;
 }
 
-// ── Lấy ứng viên bán kính tự động ───────────────────────────────
-function getCandidates(board: CellValue[][], bs: number, radius?: number): [number, number][] {
-  const r = radius ?? getScanRadius(bs);
+// ── Candidate cells: empty cells within radius 2 (spec) of any piece ─────────
+function getCandidates(board: CellValue[][], rows: number, cols: number, radius = 2): [number, number][] {
+  const set = new Set<number>();
   const cands: [number, number][] = [];
-  const visited = new Set<number>();
-  let hasAny = false;
-  for (let row = 0; row < bs; row++) for (let col = 0; col < bs; col++) {
-    if (!board[row][col]) continue;
-    hasAny = true;
-    for (let dr = -r; dr <= r; dr++) for (let dc = -r; dc <= r; dc++) {
-      const nr = row + dr, nc = col + dc, key = nr * 64 + nc;
-      if (nr >= 0 && nr < bs && nc >= 0 && nc < bs && !board[nr][nc] && !visited.has(key)) {
-        visited.add(key); cands.push([nr, nc]);
-      }
+  let any = false;
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    if (!board[r][c]) continue;
+    any = true;
+    for (let dr = -radius; dr <= radius; dr++) for (let dc = -radius; dc <= radius; dc++) {
+      const nr = r+dr, nc = c+dc, k = nr*64+nc;
+      if (nr >= 0 && nr < rows && nc >= 0 && nc < cols && !board[nr][nc] && !set.has(k)) { set.add(k); cands.push([nr,nc]); }
     }
   }
-  return hasAny ? cands : [[Math.floor(bs / 2), Math.floor(bs / 2)]];
+  return any ? cands : [[rows >> 1, cols >> 1]];
 }
 
-// ── Đánh giá toàn bàn (cho minimax) ─────────────────────────────
-// Mình: cộng ATK; đối thủ: trừ theo DEF (chỉ trừ thế sống, bỏ thế chết)
-function evaluateBoard(board: CellValue[][], me: CellValue, opp: CellValue, bs: number, wc: number): number {
+// ── Cheap move scorer for minimax candidate ordering ────────────────────────
+// Counts adjacent same/opp pieces from (r,c) in all directions
+// O(4 * radius) — much cheaper than full evalBoard
+function quickScore(board: CellValue[][], r: number, c: number, me: CellValue, opp: CellValue, rows: number, cols: number, wc: number): number {
   let score = 0;
-  const center = Math.floor(bs / 2);
-  for (let r = 0; r < bs; r++) for (let c = 0; c < bs; c++) {
-    const p = board[r][c] as CellValue;
-    if (!p) continue;
-    const isMe = p === me;
-    for (const [dr, dc] of DIRS) {
-      const { count, block } = scanDir(board, r, c, dr, dc, p, bs, wc);
-      const s = getScore(count, block, wc);
-      if (isMe) {
-        score += s;
-      } else {
-        // Phòng thủ: chỉ tính thế sống của địch (block===0), thế chết bỏ qua
-        score -= block === 0 ? s * 1.1 : (count >= wc - 1 ? s * 0.5 : 0);
-      }
+  for (const [dr, dc] of DIRS4) {
+    let mine = 0, theirs = 0;
+    for (let i = 1; i < wc; i++) {
+      const nr = r+dr*i, nc = c+dc*i;
+      if (nr<0||nr>=rows||nc<0||nc>=cols) break;
+      if (board[nr][nc] === me) mine++; else if (board[nr][nc] === opp) { theirs++; break; } else break;
     }
-    const dist = Math.max(Math.abs(r - center), Math.abs(c - center));
-    score += isMe ? (bs / 2 - dist) * 2 : -(bs / 2 - dist) * 1;
+    for (let i = 1; i < wc; i++) {
+      const nr = r-dr*i, nc = c-dc*i;
+      if (nr<0||nr>=rows||nc<0||nc>=cols) break;
+      if (board[nr][nc] === me) mine++; else if (board[nr][nc] === opp) { theirs++; break; } else break;
+    }
+    // Reward building own chain; reward blocking opponent chain slightly more
+    score += mine * 10 + theirs * 12;
   }
   return score;
 }
 
-// ── Minimax alpha-beta depth 4 ───────────────────────────────────
+// ── Minimax with Alpha-Beta pruning (depth 4–6 per board size) ────────────────
 function minimax(
   board: CellValue[][], depth: number, alpha: number, beta: number,
-  isMax: boolean, me: CellValue, opp: CellValue, bs: number, wc: number
+  isMax: boolean, me: CellValue, opp: CellValue, rows: number, cols: number, wc: number
 ): number {
-  if (depth === 0) return evaluateBoard(board, me, opp, bs, wc);
-  // Dùng scan radius nhỏ hơn trong minimax để tiết kiệm CPU
-  const cands = getCandidates(board, bs, Math.max(2, getScanRadius(bs) - 1)).slice(0, 12);
-  if (!cands.length) return 0;
+  if (depth === 0) return evalBoard(board, me, opp, rows, cols, wc);
+
+  // Candidate cells (radius 2) limited to 12 per node for performance
+  const raw = getCandidates(board, rows, cols, 2);
+  if (!raw.length) return 0;
+
+  // Cheap ordering: sort by quickScore so best moves are tried first → better pruning
+  const cr = rows >> 1, cc = cols >> 1;
+  const cands = raw
+    .map(([r, c]) => {
+      const qs = quickScore(board, r, c, me, opp, rows, cols, wc);
+      const dist = Math.abs(r - cr) + Math.abs(c - cc);
+      return { r, c, s: qs - dist };
+    })
+    .sort((a, b) => isMax ? b.s - a.s : a.s - b.s)
+    .slice(0, 12);
 
   if (isMax) {
     let best = -Infinity;
-    for (const [r, c] of cands) {
+    for (const { r, c } of cands) {
       board[r][c] = me;
-      if (checkWin(board, r, c, me, bs, wc)) { board[r][c] = 0; return WIN_SCORE * 10 + depth; }
-      best = Math.max(best, minimax(board, depth - 1, alpha, beta, false, me, opp, bs, wc));
+      // Terminal check (fast): did I just win?
+      if (checkWin(board, r, c, me, rows, wc)) { board[r][c] = 0; return AI_WIN * 10 + depth; }
+      const val = minimax(board, depth - 1, alpha, beta, false, me, opp, rows, cols, wc);
       board[r][c] = 0;
-      alpha = Math.max(alpha, best);
-      if (beta <= alpha) break;
+      if (val > best) best = val;
+      if (best > alpha) alpha = best;
+      if (beta <= alpha) break; // α-β cutoff
     }
     return best;
   } else {
     let best = Infinity;
-    for (const [r, c] of cands) {
+    for (const { r, c } of cands) {
       board[r][c] = opp;
-      if (checkWin(board, r, c, opp, bs, wc)) { board[r][c] = 0; return -(WIN_SCORE * 10 + depth); }
-      best = Math.min(best, minimax(board, depth - 1, alpha, beta, true, me, opp, bs, wc));
+      if (checkWin(board, r, c, opp, rows, wc)) { board[r][c] = 0; return AI_LOSE * 10 - depth; }
+      const val = minimax(board, depth - 1, alpha, beta, true, me, opp, rows, cols, wc);
       board[r][c] = 0;
-      beta = Math.min(beta, best);
+      if (val < best) best = val;
+      if (best < beta) beta = best;
       if (beta <= alpha) break;
     }
     return best;
   }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  AI THEO ĐỘ KHÓ
-// ══════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//  EASY / MEDIUM AI (lightweight, no deep minimax)
+// ══════════════════════════════════════════════════════════════════════════════
 
-function getAIMoveEasy(board: CellValue[][], me: 1 | 2, bs: number, wc: number): [number, number] {
+function getAIMoveEasy(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
   const opp: CellValue = me === 1 ? 2 : 1;
-  const cands = getCandidates(board, bs, 2);
-  for (const [r, c] of cands) {
-    board[r][c] = me; const w = checkWin(board, r, c, me, bs, wc); board[r][c] = 0; if (w) return [r, c];
-  }
-  for (const [r, c] of cands) {
-    board[r][c] = opp; const w = checkWin(board, r, c, opp, bs, wc); board[r][c] = 0; if (w) return [r, c];
-  }
-  return cands.sort(() => Math.random() - 0.5)[0] ?? [Math.floor(bs / 2), Math.floor(bs / 2)];
+  const rows = board.length, cols = board[0]?.length ?? bs;
+  const cands = getCandidates(board, rows, cols, 2);
+  // Block/win only, otherwise random
+  for (const [r,c] of cands) { board[r][c]=me; const w=checkWin(board,r,c,me,rows,wc); board[r][c]=0; if(w) return [r,c]; }
+  for (const [r,c] of cands) { board[r][c]=opp; const w=checkWin(board,r,c,opp,rows,wc); board[r][c]=0; if(w) return [r,c]; }
+  return cands.sort(() => Math.random() - 0.5)[0] ?? [rows>>1, cols>>1];
 }
 
-function getAIMoveMedium(board: CellValue[][], me: 1 | 2, bs: number, wc: number): [number, number] {
+function getAIMoveMedium(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
   const opp: CellValue = me === 1 ? 2 : 1;
-  const cands = getCandidates(board, bs, 2);
-  for (const [r, c] of cands) {
-    board[r][c] = me; const w = checkWin(board, r, c, me, bs, wc); board[r][c] = 0; if (w) return [r, c];
-  }
-  for (const [r, c] of cands) {
-    board[r][c] = opp; const w = checkWin(board, r, c, opp, bs, wc); board[r][c] = 0; if (w) return [r, c];
-  }
-  let best = cands[0], bestScore = -Infinity;
-  for (const [r, c] of cands.slice(0, 24)) {
-    const s = evaluateMove(board, r, c, me, opp, bs, wc);
-    if (s === FORBIDDEN) continue;
-    const total = s + Math.random() * 400;
-    if (total > bestScore) { bestScore = total; best = [r, c]; }
+  const rows = board.length, cols = board[0]?.length ?? bs;
+  const cands = getCandidates(board, rows, cols, 2);
+  for (const [r,c] of cands) { board[r][c]=me; const w=checkWin(board,r,c,me,rows,wc); board[r][c]=0; if(w) return [r,c]; }
+  for (const [r,c] of cands) { board[r][c]=opp; const w=checkWin(board,r,c,opp,rows,wc); board[r][c]=0; if(w) return [r,c]; }
+  const cr=rows>>1, cc=cols>>1;
+  let best=cands[0], bestScore=-Infinity;
+  for (const [r,c] of cands.slice(0,28)) {
+    board[r][c]=me; const atk=evalBoard(board,me,opp,rows,cols,wc); board[r][c]=0;
+    board[r][c]=opp; const def=evalBoard(board,me,opp,rows,cols,wc); board[r][c]=0;
+    const s = atk - def*0.9 - (Math.abs(r-cr)+Math.abs(c-cc))*0.5 + Math.random()*200;
+    if (s > bestScore) { bestScore=s; best=[r,c]; }
   }
   return best;
 }
 
-// ── HARD (Cheat Mode): evaluate_move + minimax + thế cấm ─────────
-export function getAIMove(board: CellValue[][], me: 1 | 2, bs: number, wc: number): [number, number] {
+// ══════════════════════════════════════════════════════════════════════════════
+//  HARD (CHEAT) AI — Full Minimax + Strict Spec Scoring
+//  Supports any N×M board via board.length / board[0].length
+// ══════════════════════════════════════════════════════════════════════════════
+export function getAIMove(board: CellValue[][], me: 1|2, bs: number, wc: number): [number, number] {
   const opp: CellValue = me === 1 ? 2 : 1;
-  const center = Math.floor(bs / 2);
-  const cands  = getCandidates(board, bs);
+  // Dynamic board dimensions — NO hardcoding
+  const rows = board.length;
+  const cols = board[0]?.length ?? bs;
+  const cr = rows >> 1, cc = cols >> 1;
 
-  // Nước đầu tiên → ô giữa
-  if (cands.length <= 1) return [center, center];
+  // First move: go to center
+  const allCands = getCandidates(board, rows, cols, 2);
+  if (allCands.length <= 1) return [cr, cc];
 
-  // Chấm điểm tất cả ứng viên bằng evaluate_move (3 lớp)
-  const scored: [[number, number], number][] = [];
-  for (const [r, c] of cands) {
-    const s = evaluateMove(board, r, c, me, opp, bs, wc);
-    if (s === FORBIDDEN) continue;  // loại thế cấm ngay
-    scored.push([[r, c], s]);
-  }
+  const depth = searchDepth(bs);
 
-  // Nếu TẤT CẢ nước đều là thế cấm (hiếm) → fallback không kiểm tra
-  if (!scored.length) return cands[0] ?? [center, center];
-
-  // Sắp xếp điểm cao nhất trước
-  scored.sort((a, b) => b[1] - a[1]);
-
-  // Nếu nước cao nhất đã là WIN hoặc BLOCK → đi ngay, không cần minimax
-  if (scored[0][1] >= BLOCK_SCORE) return scored[0][0];
-
-  // Minimax top 18 ứng viên (bỏ thế cấm đã lọc rồi)
-  const top = scored.slice(0, 18);
-  let best: [number, number] = top[0][0];
-  let bestTotal = -Infinity;
-
-  for (const [[r, c], quickScore] of top) {
+  // Step 1: quick-score all candidates with evalBoard (1-ply)
+  // This identifies immediate wins, blocks, and fork setups before deep search
+  const prescored: [[number, number], number][] = [];
+  for (const [r, c] of allCands) {
+    // Immediate win?
     board[r][c] = me;
-    const mm = minimax(board, 4, -Infinity, Infinity, false, me, opp, bs, wc);
+    if (checkWin(board, r, c, me, rows, wc)) { board[r][c] = 0; return [r, c]; }
+    const atkScore = evalBoard(board, me, opp, rows, cols, wc);
     board[r][c] = 0;
-    // Kết hợp: minimax nhìn xa + quick score tức thì
-    const total = mm * 1.4 + quickScore * 0.8;
-    if (total > bestTotal) { bestTotal = total; best = [r, c]; }
+
+    // Opponent win → must block
+    board[r][c] = opp;
+    if (checkWin(board, r, c, opp, rows, wc)) { board[r][c] = 0; return [r, c]; } // block immediately
+    const defScore = evalBoard(board, me, opp, rows, cols, wc);
+    board[r][c] = 0;
+
+    const dist = Math.abs(r - cr) + Math.abs(c - cc);
+    // Combined: attack + defense (defensive bias per spec) + center proximity
+    const score = atkScore - defScore * 1.2 - dist;
+    prescored.push([[r, c], score]);
   }
-  return best;
+
+  // Sort and take top 18 candidates for deep minimax
+  prescored.sort((a, b) => b[1] - a[1]);
+  const top = prescored.slice(0, 18);
+
+  // If top candidate is an emergency block (opponent has 4) return it immediately
+  if (prescored[0][1] <= AI_LOSE * 0.5) return prescored[0][0];
+
+  // Step 2: deep minimax on top candidates
+  let bestMove: [number, number] = top[0][0];
+  let bestVal = -Infinity;
+  let alpha = -Infinity, beta = Infinity;
+
+  for (const [[r, c], _] of top) {
+    board[r][c] = me;
+    const val = minimax(board, depth - 1, alpha, beta, false, me, opp, rows, cols, wc);
+    board[r][c] = 0;
+    if (val > bestVal) { bestVal = val; bestMove = [r, c]; }
+    if (val > alpha) alpha = val;
+    // Top-level pruning: if found a win, stop searching
+    if (bestVal >= AI_WIN) break;
+  }
+
+  return bestMove;
 }
 
-export function getAIMoveByDifficulty(
-  board: CellValue[][], piece: 1 | 2, bs: number, wc: number, difficulty: AIDifficulty
-): [number, number] {
-  switch (difficulty) {
+// ── Route by difficulty ───────────────────────────────────────────────────────
+export function getAIMoveByDifficulty(board: CellValue[][], piece: 1|2, bs: number, wc: number, diff: AIDifficulty): [number, number] {
+  switch (diff) {
     case "easy":   return getAIMoveEasy(board, piece, bs, wc);
     case "medium": return getAIMoveMedium(board, piece, bs, wc);
     default:       return getAIMove(board, piece, bs, wc);
@@ -440,6 +422,5 @@ export function getAIMoveByDifficulty(
 
 export function cleanupOldRooms() {
   const now = Date.now();
-  for (const [id, room] of rooms.entries())
-    if (now - room.createdAt > 2 * 60 * 60 * 1000) rooms.delete(id);
+  for (const [id, room] of rooms) if (now - room.createdAt > 7_200_000) rooms.delete(id);
 }
